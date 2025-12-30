@@ -38,12 +38,27 @@ export class AuthManager {
         const authUrl = await this.getAuthUrl();
         console.log('Launching Electron to handle authentication...');
 
+        // 1. Compile the Electron script
+        try {
+            console.log('Compiling Electron script...');
+            const { execSync } = await import('child_process');
+            execSync('bun build src/auth/electron-login.ts --outfile dist/auth/electron-login.js --target node --external electron', { stdio: 'inherit' });
+
+            // 2. Copy preload.js
+            fs.mkdirSync('dist/auth', { recursive: true });
+            fs.copyFileSync('src/auth/preload.js', 'dist/auth/preload.js');
+        } catch (e) {
+            console.error('Failed to compile Electron script:', e);
+            throw new Error('Build failed');
+        }
+
         return new Promise((resolve, reject) => {
             const electronPath = path.resolve(process.cwd(), 'node_modules', '.bin', 'electron');
-            const scriptPath = path.resolve(process.cwd(), 'src/auth/electron-login.ts');
+            const scriptPath = path.resolve(process.cwd(), 'dist/auth/electron-login.js');
             const cookiePathAbs = path.resolve(process.cwd(), this.COOKIES_PATH);
 
-            const args = ['-r', 'ts-node/register', scriptPath];
+            // No ts-node args needed now
+            const args = [scriptPath];
 
             console.log(`Spawning: ${electronPath} ${args.join(' ')}`);
 
@@ -57,37 +72,47 @@ export class AuthManager {
                 }
             });
 
+            // Timeout mechanism (5 minutes)
+            const timeout = setTimeout(() => {
+                console.error('[Parent] Auth timed out after 5 minutes.');
+                child.kill();
+                reject(new Error('Authentication timed out'));
+            }, 5 * 60 * 1000);
+
             if (!child || !child.stdout || !child.stderr) {
+                clearTimeout(timeout);
                 return reject(new Error('Failed to spawn Electron process'));
             }
 
             child.stdout.on('data', (data) => {
+                // Forward Electron logs
                 const output = data.toString().trim();
-                console.log(`[Electron]: ${output}`);
+                console.log(output);
             });
 
             child.stderr.on('data', (data) => {
-                // console.error(`[Electron Log]: ${data}`);
+                console.error(`[Electron Err]: ${data}`);
             });
 
             child.on('message', (message: any) => {
                 if (message && message.type === 'token-success') {
                     console.log('[Parent] Received token from Electron.');
+                    clearTimeout(timeout);
                     resolve(message.token);
                 } else if (message && message.type === 'login-success') {
                     console.log('[Parent] Login success signaled (waiting for token...)');
                 } else if (message && message.type === 'error') {
-                    // Don't reject yet, process might exit with error code
                     console.error('[Parent] Error from Electron:', message.error);
                 }
             });
 
-            child.on('close', async (code) => {
+            child.on('close', (code) => {
+                clearTimeout(timeout);
                 console.log('Electron process closed with code:', code);
-                // We don't need to do anything here as the token should have been received via IPC
             });
 
             child.on('error', (err) => {
+                clearTimeout(timeout);
                 reject(new Error(`Failed to start Electron process: ${err.message}`));
             });
         });
