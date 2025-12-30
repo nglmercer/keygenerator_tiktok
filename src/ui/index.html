@@ -19,7 +19,13 @@
             <div class="logo">
                 <span class="tiktok-color">TikTok</span> Stream Key
             </div>
-            <div id="auth-status" class="status-badge unauthorized">Not Authenticated</div>
+            <div class="header-right">
+                <div id="user-info" class="user-info hidden">
+                    <img id="user-avatar" src="" alt="Avatar">
+                    <span id="user-name">Username</span>
+                </div>
+                <div id="auth-status" class="status-badge unauthorized">Not Authenticated</div>
+            </div>
         </header>
 
         <main>
@@ -41,6 +47,13 @@
                     <div class="search-container">
                         <input type="text" id="game-search" placeholder="Search for a game...">
                         <div id="search-results" class="search-results hidden"></div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Popular Categories</label>
+                    <div id="quick-categories" class="quick-categories">
+                        <span class="loading-text">Loading...</span>
                     </div>
                 </div>
 

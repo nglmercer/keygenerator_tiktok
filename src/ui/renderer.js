@@ -1,7 +1,6 @@
 (function () {
     'use strict';
 
-    // Prevent duplicate execution
     if (window.__rendererInitialized) return;
     window.__rendererInitialized = true;
 
@@ -18,6 +17,7 @@
     const searchResults = document.getElementById('search-results');
     const streamTitle = document.getElementById('stream-title');
     const logConsole = document.getElementById('log-console');
+    const quickCats = document.getElementById('quick-categories');
 
     const rtmpUrlInput = document.getElementById('rtmp-url');
     const streamKeyInput = document.getElementById('stream-key');
@@ -43,19 +43,65 @@
         }
     });
 
-    function updateUI(isAuthorized) {
+    async function updateUI(isAuthorized) {
         if (isAuthorized) {
             authStatus.innerText = 'Authenticated';
             authStatus.className = 'status-badge authorized';
             loginSection.classList.add('hidden');
             streamSection.classList.remove('hidden');
+
+            // Fetch and show user info
+            const profile = await electronAPI.invoke('user:profile');
+            if (profile) {
+                document.getElementById('user-info').classList.remove('hidden');
+                document.getElementById('user-avatar').src = profile.avatar_thumb || profile.avatar_url || 'https://www.tiktok.com/favicon.ico';
+                document.getElementById('user-name').innerText = profile.display_name || profile.username || 'User';
+            }
+
+            // Fetch and show categories
+            fetchInitialCategories();
         } else {
             authStatus.innerText = 'Not Authenticated';
             authStatus.className = 'status-badge unauthorized';
             loginSection.classList.remove('hidden');
             streamSection.classList.add('hidden');
             resultSection.classList.add('hidden');
+            document.getElementById('user-info').classList.add('hidden');
         }
+    }
+
+    async function fetchInitialCategories() {
+        if (!quickCats) return;
+        quickCats.innerHTML = '<span class="loading-text">Loading...</span>';
+        try {
+            // We use 'stream:search' with empty string which now triggers getInitialCategories in API
+            const categories = await electronAPI.invoke('stream:search', '');
+            if (categories && categories.length > 0) {
+                renderCategoryPills(categories);
+            } else {
+                quickCats.innerHTML = '<span class="error-text">No categories found</span>';
+            }
+        } catch (e) {
+            quickCats.innerHTML = '<span class="error-text">Error loading categories</span>';
+        }
+    }
+
+    function renderCategoryPills(categories) {
+        quickCats.innerHTML = '';
+        categories.slice(0, 15).forEach(cat => {
+            const pill = document.createElement('span');
+            pill.className = 'category-pill';
+            pill.innerText = cat.full_name;
+            pill.addEventListener('click', () => {
+                gameSearch.value = cat.full_name;
+                selectedCategory = cat.game_mask_id;
+                log(`Selected: ${cat.full_name}`);
+
+                document.querySelectorAll('.category-pill').forEach(p => p.classList.remove('active'));
+                pill.classList.add('active');
+            });
+            quickCats.appendChild(pill);
+        });
     }
 
     // Search Logic
@@ -63,22 +109,35 @@
     gameSearch.addEventListener('input', () => {
         clearTimeout(searchTimeout);
         const query = gameSearch.value.trim();
+        if (query.length === 0) {
+            fetchInitialCategories(); // Show defaults again if cleared
+            searchResults.classList.add('hidden');
+            return;
+        }
         if (query.length < 2) {
             searchResults.classList.add('hidden');
             return;
         }
 
         searchTimeout = setTimeout(async () => {
-            log(`Searching for: ${query}...`);
+            searchResults.innerHTML = '<div class="result-item" style="color: var(--text-secondary); font-style: italic;">Searching...</div>';
+            searchResults.classList.remove('hidden');
+
+            log(`Searching categories for: "${query}"...`);
             const results = await electronAPI.invoke('stream:search', query);
-            displaySearchResults(results);
+            displaySearchResults(results, query);
         }, 500);
     });
 
-    function displaySearchResults(results) {
+    function displaySearchResults(results, query) {
         searchResults.innerHTML = '';
         if (!results || results.length === 0) {
-            searchResults.classList.add('hidden');
+            const empty = document.createElement('div');
+            empty.className = 'result-item';
+            empty.style.color = 'var(--text-secondary)';
+            empty.style.fontSize = '0.85rem';
+            empty.innerHTML = `No direct matches for "${query}"<br><small>Try a shorter name or broad term.</small>`;
+            searchResults.appendChild(empty);
             return;
         }
 
@@ -91,11 +150,20 @@
                 selectedCategory = res.game_mask_id;
                 searchResults.classList.add('hidden');
                 log(`Selected category: ${res.full_name}`);
+
+                document.querySelectorAll('.category-pill').forEach(p => p.classList.remove('active'));
             });
             searchResults.appendChild(item);
         });
         searchResults.classList.remove('hidden');
     }
+
+    // Close results when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!gameSearch.contains(e.target) && !searchResults.contains(e.target)) {
+            searchResults.classList.add('hidden');
+        }
+    });
 
     startBtn.addEventListener('click', async () => {
         if (!selectedCategory && gameSearch.value !== 'Other') {
@@ -119,7 +187,7 @@
             startBtn.classList.add('hidden');
             stopBtn.classList.remove('hidden');
         } else {
-            log('Failed to start stream', 'error');
+            log('Failed to start stream. Check if you have Live Access.', 'error');
         }
         startBtn.disabled = false;
     });
@@ -166,10 +234,14 @@
 
     // Check initial status
     (async () => {
-        const info = await electronAPI.invoke('stream:info');
-        if (info) {
-            log('Already authenticated with TikTok.', 'success');
-            updateUI(true);
+        try {
+            const info = await electronAPI.invoke('stream:info');
+            if (info) {
+                log('Session restored.', 'success');
+                updateUI(true);
+            }
+        } catch (e) {
+            updateUI(false);
         }
     })();
 })();

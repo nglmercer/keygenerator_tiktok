@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs';
 import crypto from 'node:crypto';
 import { StreamlabsAuth } from './electron-login.ts';
 
@@ -33,12 +34,33 @@ export class AuthManager {
     }
 
     async retrieveToken(): Promise<string> {
+        const tokenPath = path.resolve(process.cwd(), 'tokens.json');
+
+        // Try to load existing token
+        if (fs.existsSync(tokenPath)) {
+            try {
+                const saved = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
+                if (saved && saved.oauth_token) {
+                    console.log('[AuthManager] Using saved token from tokens.json');
+                    return saved.oauth_token;
+                }
+            } catch (e) {
+                console.error('[AuthManager] Failed to load saved tokens:', e);
+            }
+        }
+
         const authUrl = await this.getAuthUrl();
         const cookiePathAbs = path.resolve(process.cwd(), this.COOKIES_PATH);
 
         console.log('[AuthManager] Starting authentication via internal Electron window...');
 
         const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier);
-        return await auth.findToken();
+        const authData = await auth.findToken();
+
+        // Save all data for later discovery scripts
+        fs.writeFileSync(tokenPath, JSON.stringify(authData, null, 2));
+        console.log('[AuthManager] Tokens saved to tokens.json');
+
+        return authData.oauth_token;
     }
 }

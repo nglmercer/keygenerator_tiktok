@@ -96,6 +96,16 @@ async function init() {
             if (!streamAPI) return false;
             return await streamAPI.end();
         });
+
+        ipcMain.handle('user:profile', async () => {
+            if (!streamAPI) return null;
+            return await streamAPI.getUserProfile();
+        });
+
+        ipcMain.handle('stream:current', async () => {
+            if (!streamAPI) return null;
+            return await streamAPI.getCurrentStream();
+        });
     }
 
     await app.whenReady();

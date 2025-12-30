@@ -8,6 +8,7 @@
     "build": "bun run typecheck && bun run build:code",
     "build:code": "bun build src/index.ts --outfile dist/main.js --target node --external electron",
     "typecheck": "bunx tsc --noEmit",
+    "discover": "bun scripts/discover.ts",
     "start": "bun run build && electron ."
   },
   "devDependencies": {

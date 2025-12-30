@@ -27,7 +27,7 @@ export class StreamlabsAuth {
         this.codeVerifier = codeVerifier;
     }
 
-    public async findToken(): Promise<string> {
+    public async findToken(): Promise<any> {
         return new Promise((resolve, reject) => {
             this.resolveToken = resolve;
             this.rejectToken = reject;
@@ -247,9 +247,9 @@ export class StreamlabsAuth {
         console.log('[Electron-Login] Token fetch result:', JSON.stringify(result));
 
         if (result.success && result.data?.success) {
-            const token = result.data.data.oauth_token;
-            console.log('[Electron-Login] Token extracted successfully:', token);
-            this.resolveToken?.(token);
+            const authData = result.data.data;
+            console.log('[Electron-Login] Auth data received successfully');
+            this.resolveToken?.(authData);
             this.cleanup();
         } else {
             console.error('[Electron-Login] Error in fetch result:', JSON.stringify(result));

@@ -27,18 +27,36 @@ export class StreamAPI {
   }
 
   async search(game: string): Promise<StreamCategory[]> {
-    if (!game) return [];
-    // If the game name exceeds 25 characters, the API will return error 500
-    const truncatedGame = game.substring(0, 25);
+    if (!game) return this.getInitialCategories();
+
+    // TikTok/Streamlabs API has a strict limit on the category parameter length.
+    // Exceeding it often results in a 500 error.
+    const query = game.trim();
+    const truncatedGame = query.length > 25 ? query.substring(0, 25) : query;
+
+    if (query.length > 25) {
+      console.log(`[StreamAPI] Truncating search query from "${query}" to "${truncatedGame}" due to API limits.`);
+    }
+
     try {
+      console.log(`[StreamAPI] Searching for category: "${truncatedGame}"`);
       const response = await this.client.get(`/info?category=${encodeURIComponent(truncatedGame)}`);
-      const categories = response.data.categories || [];
-      // Python snippet adds "Other" category
-      categories.push({ full_name: 'Other', game_mask_id: '' });
-      return categories;
-    } catch (error) {
-      console.error('Error searching for game:', error);
+      const results = response.data.categories || [];
+      console.log(`[StreamAPI] Found ${results.length} matches for "${truncatedGame}"`);
+      return results;
+    } catch (error: any) {
+      console.error('[StreamAPI] Search failed:', error.response?.status, error.message);
       return [];
+    }
+  }
+
+  async getInitialCategories(): Promise<StreamCategory[]> {
+    try {
+      // Try to fetch 'gaming' by default to have something to show
+      const response = await this.client.get('/info?category=gaming');
+      return (response.data.categories || []).slice(0, 20);
+    } catch (error) {
+      return [{ full_name: 'Other', game_mask_id: '', id: 'other' }];
     }
   }
 
@@ -89,10 +107,37 @@ export class StreamAPI {
   async getInfo(): Promise<any> {
     try {
       const response = await this.client.get('/info');
+      console.log('[StreamAPI] Info response:', JSON.stringify(response.data));
       return response.data;
     } catch (error: any) {
       console.error('Error getting info:', error.response?.data || error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Fetches the current user's profile and TikTok status
+   */
+  async getUserProfile(): Promise<any> {
+    try {
+      // In many unofficial Streamlabs TikTok integrations, the /info endpoint
+      // contains the 'user' object with username, avatar, etc.
+      const data = await this.getInfo();
+      return data.user || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Fetches current stream status if any
+   */
+  async getCurrentStream(): Promise<any> {
+    try {
+      const response = await this.client.get('/stream/current');
+      return response.data;
+    } catch (error) {
+      return null;
     }
   }
 }
