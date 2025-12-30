@@ -1,14 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'">
     <title>TikTok Stream Key Generator</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 </head>
+
 <body class="dark-mode">
     <div class="container">
         <header>
@@ -31,7 +35,7 @@
                     <label for="stream-title">Stream Title</label>
                     <input type="text" id="stream-title" placeholder="Enter stream title..." value="TikTok Live Stream">
                 </div>
-                
+
                 <div class="form-group">
                     <label for="game-search">Category / Game</label>
                     <div class="search-container">
@@ -74,4 +78,5 @@
     </div>
     <script src="renderer.js"></script>
 </body>
+
 </html>
