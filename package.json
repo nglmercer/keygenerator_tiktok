@@ -12,6 +12,8 @@
   "dependencies": {
     "axios": "^1.13.2",
     "commander": "^14.0.2",
-    "playwright": "^1.57.0"
+    "electron": "^39.2.7",
+    "playwright": "^1.57.0",
+    "ts-node": "^10.9.2"
   }
 }

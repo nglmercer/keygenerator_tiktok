@@ -1,338 +1,53 @@
-# Migración a JavaScript - Estructura y Especificaciones
-// FUENTE: https://deepwiki.com/Loukious/StreamLabsTikTokStreamKeyGenerator
-Basado en el código actual del StreamLabs TikTok Stream Key Generator, aquí está la estructura base y especificaciones para migrar a JavaScript:
+# TikTok Stream Key Generator
 
-## Arquitectura Propuesta
+Este proyecto ha sido migrado a TypeScript/JavaScript utilizando Electron para manejar la autenticación de manera robusta.
 
-### Componentes Principales
-- **Frontend**: React/Vue.js para reemplazar PySide6 GUI
-- **API Client**: Axios/Fetch para reemplazar requests
-- **Authentication**: Manejo OAuth sin Selenium (usar popup/redirect)
-- **State Management**: Redux/Context API para reemplazar configuración JSON
+## Características Actuales
 
-## Endpoints de API
+- **Autenticación con Electron**: Utiliza una ventana de navegador real para el login de TikTok y la autorización de Streamlabs, resolviendo problemas de cookies y headers.
+- **Persistencia de Sesión**: Guarda y carga cookies automáticamente para evitar logins repetidos.
+- **Generación de Claves**: Obtiene automáticamente la clave de transmisión (Stream Key) y la URL RTMP.
+- **IPC Logging**: Sistema de logs detallados mediante IPC para depurar la comunicación entre el proceso de renderizado (navegador) y el proceso principal.
 
-Los endpoints críticos a implementar [1](#0-0) :
+## Estructura del Proyecto
 
-```javascript
-const API_BASE = 'https://streamlabs.com/api/v5/slobs/tiktok';
+- `src/index.ts`: Punto de entrada principal.
+- `src/auth/AuthManager.ts`: Gestiona el proceso de autenticación, lanzando el proceso de Electron.
+- `src/auth/electron-login.ts`: Script principal de Electron que maneja la ventana, inyección de scripts y recuperación del token.
+- `src/auth/preload.ts`: Script de precarga para exponer APIs seguras (IPC) al contexto de la página web.
+- `src/api/StreamAPI.ts`: Cliente para interactuar con la API de Streamlabs una vez obtenido el token.
 
-// Endpoints principales
-const ENDPOINTS = {
-  INFO: `${API_BASE}/info`,
-  SEARCH: `${API_BASE}/info?category={game}`,
-  START: `${API_BASE}/stream/start`,
-  END: `${API_BASE}/stream/{id}/end`,
-  AUTH_DATA: 'https://streamlabs.com/api/v5/slobs/auth/data'
-};
-```
+## Uso
 
-## Estructura de Clases en JS
+1. Instalar dependencias:
+   ```bash
+   npm install
+   ```
 
-### StreamAPI (equivalente a Stream.py)
-```javascript
-class StreamAPI {
-  constructor(token) {
-    this.token = token;
-    this.client = axios.create({
-      baseURL: 'https://streamlabs.com/api/v5/slobs/tiktok',
-      headers: {
-        'User-Agent': 'Mozilla/5.0...StreamlabsDesktop/1.17.0...',
-        'Authorization': `Bearer ${token}`
-      }
-    });
-  }
+2. Ejecutar:
+   ```bash
+   npm start
+   ```
 
-  async search(game) {
-    if (!game) return [];
-    const truncatedGame = game.substring(0, 25);
-    const response = await this.client.get(`/info?category=${truncatedGame}`);
-    return response.data.categories;
-  }
+## Detalles Técnicos
 
-  async start(title, category, audienceType = '0') {
-    const formData = new FormData();
-    formData.append('title', title);
-    formData.append('device_platform', 'win32');
-    formData.append('category', category);
-    formData.append('audience_type', audienceType);
-    
-    const response = await this.client.post('/stream/start', formData);
-    return {
-      rtmpUrl: response.data.rtmp,
-      streamKey: response.data.key,
-      id: response.data.id
-    };
-  }
+### Flujo de Autenticación
 
-  async end(streamId) {
-    const response = await this.client.post(`/stream/${streamId}/end`);
-    return response.data.success;
-  }
+1. `AuthManager` genera `code_verifier` y `code_challenge` (PKCE).
+2. Se lanza un proceso de Electron (`electron-login.ts`) con las variables de entorno necesarias.
+3. Electron carga cookies previas (si existen) y navega a TikTok.
+4. El usuario inicia sesión (o se detecta sesión activa).
+5. Se navega a la URL de autorización de Streamlabs.
+6. Al detectar el redirect de éxito (`success=true`), se inyecta un script en la página.
+7. **Inyección y Fetch**: El script inyectado utiliza `fetch` dentro del contexto de la ventana (donde residen las cookies de sesión) para obtener el `oauth_token` desde:
+   `https://streamlabs.com/api/v5/slobs/auth/data?code_verifier=...`
+8. El resultado se envía de vuelta al proceso principal mediante IPC (`ipcRenderer.send('fetch-result', ...)`).
+9. El token se devuelve a `AuthManager` y se guarda la sesión.
 
-  async getInfo() {
-    const response = await this.client.get('/info');
-    return response.data;
-  }
-}
-```
+### IPC y Debugging
 
-### AuthManager (equivalente a TokenRetriever.py)
-```javascript
-class AuthManager {
-  constructor() {
-    this.CLIENT_KEY = 'awdjaq9ide8ofrtz';
-    this.REDIRECT_URI = 'https://streamlabs.com/tiktok/auth';
-    this.codeVerifier = this.generateCodeVerifier();
-    this.codeChallenge = this.generateCodeChallenge(this.codeVerifier);
-  }
+Se ha implementado un puente IPC en `src/auth/preload.js` que permite:
+- `window.electronAPI.log(msg)`: Enviar logs desde la consola del navegador a la terminal de node.
+- `window.electronAPI.sendResult(channel, data)`: Enviar datos complejos (como el resultado del fetch) al proceso principal.
 
-  generateCodeVerifier() {
-    const array = new Uint8Array(64);
-    crypto.getRandomValues(array specifies the OAuth PKCE flow parameters needed for authentication [2](#0-1) );
-    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
-  }
-
-  generateCodeChallenge(verifier) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(verifier);
-    return crypto.subtle.digest('SHA-256', data).then(digest => {
-      const decimalArray = Array.from(new Uint8Array(digest));
-      const hexadecimalString = decimalArray.map(b => String.fromCharCode(b)).join('');
-      const decimalCode = btoa(hexadecimalString);
-      return decimalCode.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    });
-  }
-
-  async getAuthUrl() {
-    return `https://streamlabs.com/m/login?force_verify=1&external=mobile&skip_splash=1&tiktok&code_challenge=${this.codeChallenge}`;
-  }
-
-  async retrieveToken() {
-    const params = {
-      code_verifier: this.codeVerifier
-    };
-    const response = await axios.get('https://streamlabs.com/api/v5/slobs/auth/data', { params });
-    
-    if (response.data.success) {
-      return response.data.data.oauth_token;
-    }
-    throw new Error('Token retrieval failed');
-  }
-}
-```
-
-## Configuración y Estado
-
-### ConfigManager (reemplaza config.json)
-```javascript
-class ConfigManager {
-  constructor() {
-    this.config = {
-      token: '',
-      title: '',
-      game: '',
-      audienceType: '0',
-      suppressDonationReminder: false
-    };
-  }
-
-  load() {
-    const saved = localStorage.getItem('streamlabs-config');
-    if (saved) {
-      this.config = { ...this.config, ...JSON.parse(saved) };
-    }
-    return this.config;
-  }
-
-  save(config) {
-    this.config = { ...this.config, ...config };
-    localStorage.setItem('streamlabs-config', JSON.stringify(this.config));
-  }
-}
-```
-
-## Componentes React Sugeridos
-
-### App.js (equivalente a StreamApp)
-```javascript
-function App() {
-  const [config, setConfig] = useState({});
-  const [streamAPI, setStreamAPI] = useState(null);
-  const [accountInfo, setAccountInfo] = useState({});
-  
-  useEffect(() => {
-    const loadedConfig = configManager.load();
-    setConfig(loadedConfig);
-    if (loadedConfig.token) {
-      const api = new StreamAPI(loadedConfig.token);
-      setStreamAPI(api);
-      loadAccountInfo(api);
-    }
-  }, []);
-
-  const loadAccountInfo = async (api) => {
-    try {
-      const info = await api.getInfo();
-      setAccountInfo(info);
-    } catch (error) {
-      console.error('Failed to load account info:', error);
-    }
-  };
-
-  return (
-    <div className="app">
-      <TokenLoader token={config.token} onTokenChange={handleTokenChange} />
-      <AccountInfo info={accountInfo} />
-      <StreamDetails config={config} onConfigChange={setConfig} />
-      <StreamControls streamAPI={streamAPI} config={config} />
-    </div>
-  );
-}
-```
-
-## Consideraciones Técnicas
-
-### Manejo de Cookies
-- Reemplazar `cookies.json` con `localStorage` o `sessionStorage`
-- El manejo de cookies de Selenium se elimina al usar OAuth popup
-
-### Threading
-- Reemplazar `threading.Thread()` con `async/await` y Promises
-- Las señales de PySide6 se convierten en callbacks/props de React
-
-### Dependencias JS
-```json
-{
-  "dependencies": {
-    "axios": "^1.6.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "crypto-js": "^4.0.0"
-  }
-}
-```
-
-## Notas
-
-- La autenticación OAuth en JS será más simple sin Selenium [3](#0-2) 
-- Los endpoints de API permanecen iguales, solo cambia el cliente HTTP
-- El estado persistente se mueve de archivos JSON a localStorage
-- La GUI PySide6 se reemplaza completamente con componentes React/Vue
-
-Wiki pages you might want to explore:
-- [Architecture and Components (Loukious/StreamLabsTikTokStreamKeyGenerator)](/wiki/Loukious/StreamLabsTikTokStreamKeyGenerator#3)
-
-### Citations
-
-**File:** Stream.py (L16-44)
-```python
-        url = f"https://streamlabs.com/api/v5/slobs/tiktok/info?category={game}"
-        info = self.s.get(url).json()
-        info["categories"].append({"full_name": "Other", "game_mask_id": ""})
-        return info["categories"]
-
-    def start(self, title, category, audience_type='0'):
-        url = "https://streamlabs.com/api/v5/slobs/tiktok/stream/start"
-        files=(
-            ('title', (None, title)),
-            ('device_platform', (None, 'win32')),
-            ('category', (None, category)),
-            ('audience_type', (None, audience_type)),
-        )
-        response = self.s.post(url, files=files).json()
-        try:
-            self.id = response["id"]
-            return response["rtmp"], response["key"]
-        except KeyError:
-            print("Error: ", response)
-            return None, None
-
-    def end(self):
-        url = f"https://streamlabs.com/api/v5/slobs/tiktok/stream/{self.id}/end"
-        response = self.s.post(url).json()
-        return response["success"]
-    
-    def getInfo(self):
-        url = "https://streamlabs.com/api/v5/slobs/tiktok/info"
-        response = self.s.get(url).json()
-```
-
-**File:** TokenRetriever.py (L11-33)
-```python
-    CLIENT_KEY = "awdjaq9ide8ofrtz"
-    REDIRECT_URI = "https://streamlabs.com/tiktok/auth"
-    STREAMLABS_API_URL = "https://streamlabs.com/api/v5/slobs/auth/data"
-
-    def __init__(self, cookies_file='cookies.json'):
-        self.code_verifier = self.generate_code_verifier()
-        self.code_challenge = self.generate_code_challenge(self.code_verifier)
-        self.streamlabs_auth_url = (
-            f"https://streamlabs.com/m/login?"
-            f"force_verify=1&external=mobile&skip_splash=1&tiktok"
-            f"&code_challenge={self.code_challenge}"
-        )
-        self.cookies_file = cookies_file
-        self.auth_code = None
-
-    @staticmethod
-    def generate_code_verifier():
-        return os.urandom(64).hex()
-
-    @staticmethod
-    def generate_code_challenge(code_verifier):
-        sha256_hash = hashlib.sha256(code_verifier.encode()).digest()
-        return base64.urlsafe_b64encode(sha256_hash).decode("utf-8").rstrip("=")
-```
-
-**File:** TokenRetriever.py (L42-89)
-```python
-    def retrieve_token(self):
-        with SB(uc=True, headless=False) as sb:
-            sb.open("https://www.tiktok.com/transparency")
-            self.load_cookies(sb)
-
-            sb.open(self.streamlabs_auth_url)
-
-            try:
-                wait = WebDriverWait(sb, 600)
-                wait.until(lambda sb: "success=true" in sb.get_current_url())
-            except:
-                print("Failed to authorize TikTok.")
-                return None
-        
-        params = {
-            'client_key': self.CLIENT_KEY,
-            'scope': 'user.info.basic,live.room.tag,live.room.info,live.room.manage,user.info.profile,user.info.stats',
-            'aid': '1459',
-            'redirect_uri': self.REDIRECT_URI,
-            'source': 'web',
-            'response_type': 'code'
-        }
-        with requests.Session() as s:
-            try:
-                time.sleep(5)
-                params= {
-                    "code_verifier": self.code_verifier
-                }
-                response = s.get(self.STREAMLABS_API_URL, params=params)
-                if response.status_code != 200:
-                    print(f"Bad response: {response.status_code} - {response.text}")
-                    return None
-                    
-                try:
-                    resp_json = response.json()
-                except json.JSONDecodeError:
-                    print("Invalid JSON response. Status code:", response.status_code)
-                    return None
-                if resp_json.get("success"):
-                    token = resp_json["data"].get("oauth_token")
-                    print(f"Got Streamlabs OAuth token: {token}")
-                    return token
-                else:
-                    print("Streamlabs token request failed:", resp_json)
-                    return None
-            except Exception as e:
-                print("Error requesting token from Streamlabs:", e)
-                return None
-```
+Esto permite visualizar errores de red (401, 403, etc.) y cuerpos de respuesta directamente en la consola de ejecución.
