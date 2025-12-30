@@ -94,21 +94,29 @@ export class AuthManager {
                 console.error(`[Electron Err]: ${data}`);
             });
 
+            let tokenReceived = false;
+
             child.on('message', (message: any) => {
                 if (message && message.type === 'token-success') {
                     console.log('[Parent] Received token from Electron.');
                     clearTimeout(timeout);
+                    tokenReceived = true;
                     resolve(message.token);
                 } else if (message && message.type === 'login-success') {
                     console.log('[Parent] Login success signaled (waiting for token...)');
                 } else if (message && message.type === 'error') {
                     console.error('[Parent] Error from Electron:', message.error);
+                    clearTimeout(timeout);
+                    reject(new Error(`Authentication failed: ${message.error}`));
                 }
             });
 
             child.on('close', (code) => {
                 clearTimeout(timeout);
                 console.log('Electron process closed with code:', code);
+                if (!tokenReceived) {
+                    reject(new Error('Electron process closed without returning a token'));
+                }
             });
 
             child.on('error', (err) => {

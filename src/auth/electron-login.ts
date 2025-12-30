@@ -151,14 +151,30 @@ class StreamlabsAuth {
     }
 
     private checkSuccess(url: string) {
-        if (url.includes('success=true') && !this.tokenFetchStarted) {
+        // Check for success patterns - specifically look for the code parameter
+        let code: string | null = null;
+        try {
+            const urlObj = new URL(url);
+            code = urlObj.searchParams.get('code');
+        } catch (e) {
+            // Invalid URL, not a success page
+            return;
+        }
+
+        const isSuccess = (url.includes('success=true') && code) ||
+            (url.includes('streamlabs.com/dashboard') && code) ||
+            (url.includes('streamlabs.com/slobs/dashboard') && code);
+
+        if (isSuccess && !this.tokenFetchStarted && code) {
             this.tokenFetchStarted = true;
-            console.log('[Electron] Success URL detected. Starting token fetch...');
+            console.log('[Electron] Success URL detected:', url);
+            console.log('[Electron] Authorization code extracted:', code);
+            console.log('[Electron] Starting token fetch...');
 
             if (process.send) process.send({ type: 'login-success' });
 
             this.saveCookies().then(() => {
-                this.executeTokenFetch();
+                this.executeTokenFetch(code!);
             });
         }
     }
@@ -180,56 +196,50 @@ class StreamlabsAuth {
         this.window?.webContents.executeJavaScript(script).catch(() => { });
     }
 
-    private executeTokenFetch() {
+    private async executeTokenFetch(code: string) {
         if (!this.codeVerifier) {
             console.error('[Electron] No CodeVerifier found!');
             return;
         }
 
+        console.log('[Electron] Fetching token from browser context...');
+        console.log('[Electron] Using code:', code);
+        console.log('[Electron] Using code_verifier:', this.codeVerifier.substring(0, 10) + '...');
+
+        // Execute fetch inside the browser and return the result directly
+        // Include both code and code_verifier in the request
         const fetchCode = `
         (async () => {
-            const waitForApi = () => new Promise((resolve, reject) => {
-                let attempts = 0;
-                const check = () => {
-                    attempts++;
-                    if (window.electronAPI) {
-                        resolve();
-                    } else if (attempts > 50) { // 5 seconds
-                        reject(new Error('electronAPI not available after 5s'));
-                    } else {
-                        setTimeout(check, 100);
-                    }
-                };
-                check();
-            });
-
             try {
-                await waitForApi();
-                window.electronAPI.log('Fetching token from inside renderer...');
-                const res = await fetch('https://streamlabs.com/api/v5/slobs/auth/data?code_verifier=${this.codeVerifier}', {
+                const res = await fetch('https://streamlabs.com/api/v5/slobs/auth/data?code=${code}&code_verifier=${this.codeVerifier}', {
                     method: 'GET',
-                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+                    credentials: 'include',
+                    headers: { 
+                        'Accept': 'application/json', 
+                        'X-Requested-With': 'XMLHttpRequest' 
+                    }
                 });
                 const text = await res.text();
-                let json;
                 try {
-                    json = JSON.parse(text);
-                    window.electronAPI.sendResult('fetch-result', { success: true, data: json });
+                    const json = JSON.parse(text);
+                    return { success: true, data: json, status: res.status };
                 } catch(e) {
-                    window.electronAPI.sendResult('fetch-result', { success: false, error: 'JSON Parse Error', body: text });
+                    return { success: false, error: 'JSON Parse Error', body: text, status: res.status };
                 }
             } catch (err) {
-                // If electronAPI is missing, we can't use it to log the error, so we console.error (which might not show in parent)
-                if (window.electronAPI) {
-                    window.electronAPI.sendResult('fetch-result', { success: false, error: err.toString() });
-                } else {
-                    console.error('CRITICAL: electronAPI missing in renderer', err);
-                }
+                return { success: false, error: err.toString() };
             }
         })()
         `;
 
-        this.window?.webContents.executeJavaScript(fetchCode);
+        try {
+            const result = await this.window?.webContents.executeJavaScript(fetchCode);
+            console.log('[Electron] Token fetch result:', JSON.stringify(result));
+            this.handleFetchResult(result);
+        } catch (err: any) {
+            console.error('[Electron] executeJavaScript error:', err.message);
+            this.handleFetchResult({ success: false, error: err.message });
+        }
     }
 
     private handleFetchResult(result: AuthResult) {
@@ -237,24 +247,33 @@ class StreamlabsAuth {
 
         if (result.success && result.data?.success) {
             const token = result.data.data.oauth_token;
-            console.log('[Electron] Token extracted successfully.');
-            if (process.send) process.send({ type: 'token-success', token });
+            console.log('[Electron] Token extracted successfully:', token);
+            if (process.send) {
+                process.send({ type: 'token-success', token });
+                console.log('[Electron] Token message sent to parent');
+            }
         } else {
             console.error('[Electron] Error in fetch result:', JSON.stringify(result));
-            if (process.send) process.send({ type: 'error', error: JSON.stringify(result) });
+            if (process.send) {
+                process.send({ type: 'error', error: JSON.stringify(result) });
+                console.log('[Electron] Error message sent to parent');
+            }
         }
 
-        this.cleanup();
+        // Wait a bit for IPC message to be delivered before cleanup
+        setTimeout(() => {
+            this.cleanup();
+        }, 500);
     }
 
     private async cleanup() {
         await this.saveCookies();
+        // Give more time for IPC to complete
         setTimeout(() => {
             console.log('[Electron] Exiting...');
-            // app.quit(); // Keep window open for a moment if needed, but usually we exit
             app.quit();
             process.exit(0);
-        }, 1000);
+        }, 2000);
     }
 }
 
