@@ -1,8 +1,12 @@
 {
   "name": "keygenerator",
   "module": "index.ts",
+  "main": "src/index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
