@@ -1,11 +1,14 @@
 {
   "name": "keygenerator",
   "module": "index.ts",
-  "main": "src/index.ts",
+  "main": "dist/main.js",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "build": "bun run typecheck && bun run build:code",
+    "build:code": "bun build src/index.ts --outfile dist/main.js --target node --external electron",
+    "typecheck": "bunx tsc --noEmit",
+    "start": "bun run build && electron ."
   },
   "devDependencies": {
     "@types/bun": "latest"

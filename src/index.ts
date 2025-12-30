@@ -1,29 +1,35 @@
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
 import fs from 'fs';
+import { spawn } from 'child_process';
+import * as electron from 'electron';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Self-relaunch in Electron if running in Bun/Node
+// Self-relaunch in Electron if running in a non-electron environment (like Bun)
 if (!process.versions.electron) {
     const electronPath = path.resolve(process.cwd(), 'node_modules', '.bin', 'electron');
-    spawn(electronPath, ['-r', 'ts-node/register', __filename], {
+    // If we're running the source file with bun, we might need a loader
+    // But since we have a build step, it's better to tell the user to use 'bun start'
+    // or relaunch with the current file if it's the bundled one.
+    const args = process.argv.slice(1);
+
+    // If it's a .ts file, we need to instruct electron how to handle it if we aren't using bun build
+    // But since we ARE using bun build, let's just relaunch whatever was called.
+    spawn(electronPath, args, {
         stdio: 'inherit',
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
     });
     process.exit(0);
 }
 
-// Re-importing inside the Electron environment using dynamic imports to satisfy Bun's pre-parsing
-async function init() {
-    const { app, BrowserWindow, ipcMain } = await import('electron');
-    const { AuthManager } = await import('./auth/AuthManager.ts');
-    const { StreamAPI } = await import('./api/StreamAPI.ts');
+// Since we are now guaranteed to be in Electron, we can get these
+const { app, BrowserWindow, ipcMain } = electron;
 
-    let mainWindow: any = null;
-    let streamAPI: any = null;
+import { AuthManager } from './auth/AuthManager.ts';
+import { StreamAPI } from './api/StreamAPI.ts';
+
+// Main Application Logic
+async function init() {
+    let mainWindow: electron.BrowserWindow | null = null;
+    let streamAPI: StreamAPI | null = null;
     let token: string | null = null;
 
     async function createWindow() {
@@ -33,34 +39,26 @@ async function init() {
             title: 'TikTok Stream Key Generator',
             backgroundColor: '#0f172a',
             webPreferences: {
-                preload: path.join(__dirname, 'ui/preload.js'),
+                preload: path.join(process.cwd(), 'src/ui/preload.js'),
                 contextIsolation: true,
                 nodeIntegration: false,
             },
         });
 
-        const indexPath = path.join(__dirname, 'ui/index.html');
+        // Try local src path first for development, then fallback to built path if needed
+        const indexPath = path.join(process.cwd(), 'src/ui/index.html');
         if (fs.existsSync(indexPath)) {
             mainWindow.loadFile(indexPath);
         } else {
-            mainWindow.loadFile(path.join(process.cwd(), 'src/ui/index.html'));
+            console.error('Could not find index.html at', indexPath);
         }
+
+        mainWindow.on('closed', () => {
+            mainWindow = null;
+        });
     }
 
-    app.whenReady().then(async () => {
-        setupIPC(ipcMain, AuthManager, StreamAPI);
-        createWindow();
-    });
-
-    app.on('window-all-closed', () => {
-        if (process.platform !== 'darwin') app.quit();
-    });
-
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
-
-    function setupIPC(ipcMain: any, AuthManager: any, StreamAPI: any) {
+    function setupIPC() {
         ipcMain.handle('auth:login', async () => {
             try {
                 console.log('[Main] Starting authentication flow...');
@@ -99,6 +97,18 @@ async function init() {
             return await streamAPI.end();
         });
     }
+
+    await app.whenReady();
+    setupIPC();
+    await createWindow();
+
+    app.on('window-all-closed', () => {
+        if (process.platform !== 'darwin') app.quit();
+    });
+
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
 }
 
 init().catch(err => {
