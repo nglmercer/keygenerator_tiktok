@@ -8,6 +8,15 @@
 mod auth;
 mod config;
 mod api;
+mod data_capture;
+mod test_utils;
+mod integration_tests;
+
+// Re-export data capture types for easier use
+pub use data_capture::CaptureState;
+pub use data_capture::CapturedData;
+pub use data_capture::CaptureConfig;
+pub use data_capture::CaptureResult;
 
 use tauri::{Emitter, Manager, Listener, State, WebviewWindowBuilder, WebviewUrl};
 use parking_lot::Mutex;
@@ -22,9 +31,12 @@ use sha2::Digest;
 pub struct LoginState {
     pub login_window_label: Mutex<String>,
     pub captured_cookies: Arc<Mutex<Option<serde_json::Value>>>,
+    pub captured_local_storage: Arc<Mutex<Option<serde_json::Value>>>,
+    pub captured_session_storage: Arc<Mutex<Option<serde_json::Value>>>,
     pub login_complete: Arc<AtomicBool>,
     pub auth_code: Arc<Mutex<Option<String>>>,
     pub code_challenge: Arc<Mutex<Option<String>>>,
+    pub tiktok_session_data: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl LoginState {
@@ -32,9 +44,12 @@ impl LoginState {
         Self {
             login_window_label: Mutex::new(String::new()),
             captured_cookies: Arc::new(Mutex::new(None)),
+            captured_local_storage: Arc::new(Mutex::new(None)),
+            captured_session_storage: Arc::new(Mutex::new(None)),
             login_complete: Arc::new(AtomicBool::new(false)),
             auth_code: Arc::new(Mutex::new(None)),
             code_challenge: Arc::new(Mutex::new(None)),
+            tiktok_session_data: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -102,6 +117,9 @@ async fn open_tiktok_login_window(
 
     // Clone the data for the closure
     let captured_cookies = login_state.captured_cookies.clone();
+    let captured_local_storage = login_state.captured_local_storage.clone();
+    let captured_session_storage = login_state.captured_session_storage.clone();
+    let tiktok_session_data = login_state.tiktok_session_data.clone();
     let captured_cookies_for_nav = login_state.captured_cookies.clone();
     let captured_cookies_for_cache = login_state.captured_cookies.clone();
     let auth_code = login_state.auth_code.clone();
@@ -122,7 +140,7 @@ async fn open_tiktok_login_window(
     let auth_code_for_nav = auth_code.clone();
     let auth_code_for_poll = auth_code.clone();
     
-    // Listen for credentials captured event
+    // Listen for credentials captured event - stores all TikTok data
     let _listener_id = login_window.listen("credentials-captured", move |event| {
         println!("[TikTok Login] Credentials captured event received");
         login_complete.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -131,9 +149,26 @@ async fn open_tiktok_login_window(
         println!("[TikTok Login] Raw payload: {}", payload);
         
         if let Ok(data) = serde_json::from_str::<serde_json::Value>(payload) {
+            // Store cookies
             let mut cookies_guard = captured_cookies.lock();
-            *cookies_guard = Some(data);
-            println!("[TikTok Login] Credentials parsed and stored");
+            *cookies_guard = Some(data.clone());
+            
+            // Store localStorage
+            let mut ls_guard = captured_local_storage.lock();
+            *ls_guard = data.get("localStorage").cloned();
+            
+            // Store sessionStorage
+            let mut ss_guard = captured_session_storage.lock();
+            *ss_guard = data.get("sessionStorage").cloned();
+            
+            // Store complete session data
+            let mut session_guard = tiktok_session_data.lock();
+            *session_guard = Some(data.clone());
+            
+            println!("[TikTok Login] All credentials parsed and stored");
+            println!("[TikTok Login] Cookies: {}", data.get("cookies").map(|c| c.as_object().map(|o| o.len()).unwrap_or(0)).unwrap_or(0));
+            println!("[TikTok Login] localStorage: {}", data.get("localStorage").map(|l| l.as_object().map(|o| o.len()).unwrap_or(0)).unwrap_or(0));
+            println!("[TikTok Login] sessionStorage: {}", data.get("sessionStorage").map(|s| s.as_object().map(|o| o.len()).unwrap_or(0)).unwrap_or(0));
         }
     });
     
@@ -1173,6 +1208,84 @@ async fn stream_end() -> Result<bool, String> {
     Ok(true)
 }
 
+// ===== TEST COMMANDS =====
+
+/// Run unit tests for the data capture module
+#[tauri::command]
+async fn run_data_capture_tests() -> Result<serde_json::Value, String> {
+    println!("[Test] Running data capture unit tests...");
+    
+    // Run integration tests
+    integration_tests::run_integration_tests();
+    
+    Ok(serde_json::json!({
+        "success": true,
+        "message": "Data capture tests completed",
+        "test_type": "unit_and_integration"
+    }))
+}
+
+/// Get the JavaScript capture script for webview injection
+#[tauri::command]
+fn get_capture_script() -> Result<serde_json::Value, String> {
+    let script = data_capture::generate_capture_script();
+    Ok(serde_json::json!({
+        "success": true,
+        "script": script,
+        "type": "capture"
+    }))
+}
+
+/// Get the JavaScript test script for webview testing
+#[tauri::command]
+fn get_test_script() -> Result<serde_json::Value, String> {
+    let script = data_capture::generate_test_script();
+    Ok(serde_json::json!({
+        "success": true,
+        "script": script,
+        "type": "test"
+    }))
+}
+
+/// Validate captured data
+#[tauri::command]
+async fn validate_captured_data(
+    data: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    println!("[Test] Validating captured data...");
+    
+    // Parse the data into CapturedData
+    let captured_data = CapturedData {
+        cookies: data.get("cookies").cloned().unwrap_or(serde_json::json!({})),
+        local_storage: data.get("localStorage").cloned().unwrap_or(serde_json::json!({})),
+        session_storage: data.get("sessionStorage").cloned().unwrap_or(serde_json::json!({})),
+        headers: serde_json::json!({}),
+        url: data.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        timestamp: data.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        login_detected: data.get("login_detected").and_then(|v| v.as_bool()).unwrap_or(false),
+        streamlabs_code: data.get("streamlabs_code").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    };
+    
+    let has_data = captured_data.has_data();
+    let has_tiktok = captured_data.has_tiktok_data();
+    let total_items = captured_data.total_items();
+    
+    Ok(serde_json::json!({
+        "success": true,
+        "validation": {
+            "has_data": has_data,
+            "has_tiktok_data": has_tiktok,
+            "total_items": total_items,
+            "is_valid": has_data && has_tiktok
+        },
+        "data": {
+            "cookies_count": captured_data.cookies.as_object().map(|o| o.len()).unwrap_or(0),
+            "localStorage_count": captured_data.local_storage.as_object().map(|o| o.len()).unwrap_or(0),
+            "sessionStorage_count": captured_data.session_storage.as_object().map(|o| o.len()).unwrap_or(0)
+        }
+    }))
+}
+
 fn main() {
     let context = tauri::generate_context!();
 
@@ -1193,7 +1306,12 @@ fn main() {
             save_credentials_to_file,
             stream_search,
             stream_start,
-            stream_end
+            stream_end,
+            // Test commands
+            run_data_capture_tests,
+            get_capture_script,
+            get_test_script,
+            validate_captured_data
         ])
         .run(context)
         .expect("Error running Tauri application");
