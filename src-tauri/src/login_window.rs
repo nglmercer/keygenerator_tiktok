@@ -161,6 +161,22 @@ pub async fn open_tiktok_login_window(
     // Inject cookie interceptor and start URL polling
     setup_cookie_interceptor(&login_window, login_state, &code_challenge_str).await;
 
+    // Immediately redirect to Streamlabs - TikTok session will be detected there
+    // Using force_verify=0 so it uses existing TikTok session if available
+    let streamlabs_url = format!(
+        "https://streamlabs.com/m/login?force_verify=0&external=mobile&skip_splash=1&tiktok&code_challenge={}",
+        code_challenge_str
+    );
+    
+    // Give a small delay for the page to load, then navigate to Streamlabs
+    let window_redirect = login_window.clone();
+    let url_to_navigate = streamlabs_url.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let _ = window_redirect.emit("navigate-to", url_to_navigate);
+        println!("[TikTok Login] Redirecting to Streamlabs for TikTok session...");
+    });
+
     Ok(json!({
         "success": true,
         "message": "Login window opened",
@@ -185,6 +201,7 @@ fn create_login_window(
         .resizable(config.resizable)
         .center()
         .always_on_top(config.always_on_top)
+        .devtools(true)  // Enable DevTools for debugging
         .build()
         .map_err(|e| LoginWindowError::WindowCreationFailed(e.to_string()))?;
 
@@ -296,14 +313,24 @@ fn setup_navigation_listener(window: &tauri::WebviewWindow, login_state: &LoginS
 
     // Clone variables for use in second listener
     let auth_code_for_url = auth_code.clone();
-    let captured_cookies_for_url = captured_cookies.clone();
+    let _captured_cookies_for_url = captured_cookies.clone();
     let streamlabs_token_for_url = streamlabs_token.clone();
-    let _code_challenge_for_url = code_challenge.clone();
+    let code_challenge_for_navigation = code_challenge.clone();
+    let code_challenge_for_url = code_challenge.clone();
 
     // Listen for navigation events
     let _listener_id = window.listen("navigation", move |event: tauri::Event| {
         let url = event.payload();
         println!("[TikTok Login] Navigation detected: {}", url);
+
+        // Re-inject interceptor on navigation to ensure it works on new page
+        let window_reinject = window_clone.clone();
+        let interceptor_script = get_cookie_interceptor_script();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let _ = window_reinject.emit("inject-script", format!("try {{\n                if (typeof window.__tiktok_credentials === 'undefined') {{\n                    {}
+                }}\n            }} catch(e) {{ console.log('Interceptor re-inject error:', e); }}", interceptor_script.replace("'", "\\'").replace("\n", " ")));
+        });
 
         match classify_url(url) {
             UrlType::StreamlabsAuthWithCode(code) => {
@@ -338,8 +365,29 @@ fn setup_navigation_listener(window: &tauri::WebviewWindow, login_state: &LoginS
                 println!("[TikTok Login] Detected Streamlabs auth page - waiting for redirect...");
             }
             UrlType::TikTokLoggedIn => {
-                println!("[TikTok Login] Detected TikTok main page - user already logged in, will redirect to Streamlabs...");
-                // Do NOT close window - will be redirected to Streamlabs by Tauri
+                println!("[TikTok Login] Detected TikTok main page - redirecting to Streamlabs via backend...");
+                
+                // Get code_challenge from the cloned variable
+                let challenge_str = code_challenge_for_navigation.clone();
+                
+                // Build Streamlabs auth URL
+                let streamlabs_url = format!(
+                    "https://streamlabs.com/m/login?force_verify=1&external=mobile&skip_splash=1&tiktok&code_challenge={}",
+                    challenge_str
+                );
+                
+                // Use Tauri navigate API directly (backend redirect)
+                if let Ok(parsed_url) = streamlabs_url.parse::<url::Url>() {
+                    println!("[TikTok Login] Backend: Navigating to Streamlabs via Tauri API");
+                    if let Err(e) = window_clone.navigate(parsed_url) {
+                        println!("[TikTok Login] Backend: Tauri navigate failed: {}", e);
+                        println!("[TikTok Login] Backend: Will retry with emit to frontend for navigation");
+                        // Emit event for frontend to handle navigation
+                        let _ = window_clone.emit("force-navigate", streamlabs_url);
+                    }
+                } else {
+                    println!("[TikTok Login] Backend: Failed to parse Streamlabs URL");
+                }
             }
             _ => {}
         }
@@ -350,6 +398,14 @@ fn setup_navigation_listener(window: &tauri::WebviewWindow, login_state: &LoginS
     let _url_listener_id = window.listen("current-url", move |event: tauri::Event| {
         let url = event.payload();
         println!("[TikTok Login] Current URL from polling: {}", url);
+
+        // Re-inject interceptor on URL change
+        let window_reinject = window_for_url.clone();
+        let interceptor_script = get_cookie_interceptor_script();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            let _ = window_reinject.emit("inject-script", format!("try {{\n                if (typeof window.__tiktok_credentials === 'undefined') {{\n                    {}\n                }}\n            }} catch(e) {{ console.log('Interceptor re-inject error:', e); }}", interceptor_script.replace("'", "\\'").replace("\n", " ")));
+        });
 
         match classify_url(url) {
             UrlType::StreamlabsAuthWithCode(code) => {
@@ -381,8 +437,26 @@ fn setup_navigation_listener(window: &tauri::WebviewWindow, login_state: &LoginS
                 });
             }
             UrlType::TikTokLoggedIn => {
-                println!("[TikTok Login] Detected TikTok login (from polling) - will redirect to Streamlabs...");
-                // Do NOT close window - will be redirected to Streamlabs by Tauri
+                println!("[TikTok Login] Detected TikTok login (from polling) - redirecting via backend...");
+                
+                // Build Streamlabs auth URL
+                let streamlabs_url = format!(
+                    "https://streamlabs.com/m/login?force_verify=1&external=mobile&skip_splash=1&tiktok&code_challenge={}",
+                    code_challenge_for_url
+                );
+                
+                // Use Tauri navigate API directly (backend redirect)
+                if let Ok(parsed_url) = streamlabs_url.parse::<url::Url>() {
+                    println!("[TikTok Login] Backend: Navigating to Streamlabs via Tauri API (from polling)");
+                    if let Err(e) = window_for_url.navigate(parsed_url) {
+                        println!("[TikTok Login] Backend: Tauri navigate failed: {}", e);
+                        println!("[TikTok Login] Backend: Will retry with emit to frontend for navigation");
+                        // Emit event for frontend to handle navigation
+                        let _ = window_for_url.emit("force-navigate", streamlabs_url);
+                    }
+                } else {
+                    println!("[TikTok Login] Backend: Failed to parse Streamlabs URL");
+                }
             }
             _ => {}
         }
@@ -390,8 +464,17 @@ fn setup_navigation_listener(window: &tauri::WebviewWindow, login_state: &LoginS
 }
 
 /// Sets up the cookie interceptor and URL polling
-async fn setup_cookie_interceptor(window: &tauri::WebviewWindow, _login_state: &LoginState, _code_challenge: &str) {
+async fn setup_cookie_interceptor(window: &tauri::WebviewWindow, _login_state: &LoginState, code_challenge: &str) {
     let window_clone = window.clone();
+    
+    // Emit code_challenge to frontend so it can be used for redirects
+    let code_challenge_clone = code_challenge.to_string();
+    let window_for_challenge = window.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let _ = window_for_challenge.emit("set-code-challenge", code_challenge_clone);
+        println!("[Cookie Interceptor] Emitted code_challenge to frontend");
+    });
 
     // Setup listener for script injection - this actually executes the JavaScript
     let window_for_script = window.clone();
@@ -422,10 +505,53 @@ async fn setup_cookie_interceptor(window: &tauri::WebviewWindow, _login_state: &
         });
     });
 
+    // Setup listener for navigate-to event (for redirecting to Streamlabs)
+    let window_for_navigate = window.clone();
+    let _navigate_listener = window.listen("navigate-to", move |event: tauri::Event| {
+        let url = event.payload();
+        println!("[Cookie Interceptor] Navigate to: {}", url);
+        
+        // Use JavaScript to navigate - this is more reliable across different page states
+        let navigate_script = format!("window.location.href = '{}';", url);
+        if let Err(e) = window_for_navigate.eval(&navigate_script) {
+            println!("[Cookie Interceptor] Failed to inject navigate script: {}", e);
+        } else {
+            println!("[Cookie Interceptor] Navigate script injected successfully");
+        }
+    });
+
+    // Setup listener for force-navigate event (backend fallback for navigation)
+    let window_for_force_navigate = window.clone();
+    let _force_navigate_listener = window.listen("force-navigate", move |event: tauri::Event| {
+        let url = event.payload();
+        println!("[Cookie Interceptor] Force navigate to: {}", url);
+        
+        // Use multiple navigation methods
+        let navigate_script = format!("try {{ window.location.href = '{}'; }} catch(e) {{ console.log('href failed'); try {{ window.location.assign('{}'); }} catch(e2) {{ console.log('assign failed'); }} }}", url, url);
+        if let Err(e) = window_for_force_navigate.eval(&navigate_script) {
+            println!("[Cookie Interceptor] Failed to inject force navigate script: {}", e);
+        } else {
+            println!("[Cookie Interceptor] Force navigate script injected successfully");
+        }
+    });
+
+    // Also inject the code_challenge into the page so the JS interceptor can use it
+    let code_challenge_for_js = code_challenge.to_string();
+    let window_for_challenge = window_clone.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let set_challenge_script = format!(
+            "window.__streamlabs_code_challenge = '{}';",
+            code_challenge_for_js
+        );
+        let _ = window_for_challenge.emit("inject-script", set_challenge_script);
+    });
+
+    let window_for_interceptor = window_clone.clone();
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         let script = get_cookie_interceptor_script();
-        let _ = window_clone.emit("inject-script", script);
+        let _ = window_for_interceptor.emit("inject-script", script);
         println!("[TikTok Login] Cookie interceptor injected");
 
         // Start URL polling as fallback (every 500ms)
@@ -445,9 +571,21 @@ async fn setup_cookie_interceptor(window: &tauri::WebviewWindow, _login_state: &
                 }
 
                 // Inject script to get current URL and emit it as an event
+                // Use try-catch to handle cases where Tauri API is not available
                 let get_url_script = r#"
                     (function() {
-                        window.__tauri__.emit('current-url', window.location.href);
+                        try {
+                            const url = window.location.href;
+                            if (window.__TAURI__ && window.__TAURI__.event) {
+                                window.__TAURI__.event.emit('current-url', url);
+                            } else if (window.__tauri__) {
+                                window.__tauri__.emit('current-url', url);
+                            } else {
+                                console.log('[TikTok URL Polling] Tauri API not available, URL:', url);
+                            }
+                        } catch(e) {
+                            console.log('[TikTok URL Polling] Error:', e);
+                        }
                     })();
                 "#;
                 let _ = window_clone.emit("inject-script", get_url_script);

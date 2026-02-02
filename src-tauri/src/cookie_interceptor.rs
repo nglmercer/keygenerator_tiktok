@@ -96,12 +96,36 @@ pub fn get_cookie_interceptor_script() -> String {
             }
         }
 
+        function redirectToStreamlabs() {
+            console.log('[Cookie Interceptor] Redirecting to Streamlabs...');
+            
+            // Get code_challenge from global variable set by Rust backend
+            let codeChallenge = window.__streamlabs_code_challenge || '';
+            
+            // Build Streamlabs URL - force_verify=0 to use existing TikTok session
+            let streamlabsUrl = 'https://streamlabs.com/m/login?force_verify=0&external=mobile&skip_splash=1&tiktok';
+            if (codeChallenge) {
+                streamlabsUrl += '&code_challenge=' + codeChallenge;
+            }
+            
+            console.log('[Cookie Interceptor] Navigating to:', streamlabsUrl);
+            
+            // Use window.location.href for reliable redirect
+            window.location.href = streamlabsUrl;
+        }
+
         function checkTikTokLoginState() {
             const url = window.location.href;
             const pathname = window.location.pathname;
             const hostname = window.location.hostname;
             
             console.log('[Cookie Interceptor] Checking login state:', hostname, pathname);
+            
+            // Check if we're already on Streamlabs - if so, don't redirect
+            if (hostname.includes('streamlabs.com')) {
+                console.log('[Cookie Interceptor] Already on Streamlabs, checking for auth code...');
+                return false;
+            }
             
             // Check if we're on TikTok domain
             const isTikTok = hostname.includes('tiktok.com');
@@ -114,21 +138,33 @@ pub fn get_cookie_interceptor_script() -> String {
                     // Could be logged in - check multiple indicators
                     const indicators = [];
                     
-                    // Check URL patterns
-                    if (pathname === '/' || pathname.startsWith('/@') || url.includes('/foryou') || url.includes('/discover')) {
-                        indicators.push('url_pattern');
+                    // Check URL patterns (main page indicators)
+                    const isMainPage = pathname === '/' || 
+                                       pathname.startsWith('/@') || 
+                                       pathname.startsWith('/user/') ||
+                                       url.includes('/foryou') || 
+                                       url.includes('/discover') ||
+                                       url.includes('/following');
+                    if (isMainPage) {
+                        indicators.push('main_page_url');
                     }
                     
                     // Check for user avatar element
-                    const userAvatar = document.querySelector('[data-e2e="user-avatar"], [data-e2e="user-info"], [data-e2e="user-profile"]');
+                    const userAvatar = document.querySelector('[data-e2e="user-avatar"], [data-e2e="user-info"], [data-e2e="user-profile"], .tiktok-1ue7bcb-AvatarContainer, [class*="avatar"]');
                     if (userAvatar) {
                         indicators.push('user_element');
+                    }
+                    
+                    // Check for nav items (logged in users see different nav)
+                    const navItems = document.querySelector('[data-e2e="nav-following"], [data-e2e="nav-for-you"], [class*="Nav"]');
+                    if (navItems) {
+                        indicators.push('nav_items');
                     }
                     
                     // Check for logged-in user info in localStorage
                     const ls = window.__tiktok_credentials.localStorage;
                     const hasUserData = Object.keys(ls).some(k => 
-                        k.includes('user') || k.includes('profile') || k.includes('session')
+                        k.includes('user') || k.includes('profile') || k.includes('session') || k.includes('device_id')
                     );
                     if (hasUserData) {
                         indicators.push('localStorage_user_data');
@@ -139,7 +175,9 @@ pub fn get_cookie_interceptor_script() -> String {
                     const hasLoginCookies = Object.keys(cookies).some(k => 
                         k.toLowerCase().includes('session') || 
                         k.toLowerCase().includes('auth') ||
-                        k.toLowerCase().includes('user')
+                        k.toLowerCase().includes('user') ||
+                        k === 'ttwid' ||
+                        k === 'tt_webid'
                     );
                     if (hasLoginCookies) {
                         indicators.push('login_cookies');
@@ -147,11 +185,32 @@ pub fn get_cookie_interceptor_script() -> String {
                     
                     console.log('[Cookie Interceptor] Login indicators:', indicators);
                     
-                    // Require at least 1 indicator for reliable detection (since user may already be logged in)
-                    if (indicators.length >= 1) {
+                    // If we're on a main page URL with at least 1 indicator, consider it logged in
+                    if (isMainPage && indicators.length >= 1) {
                         window.__tiktok_credentials.login_detected = true;
                         window.__tiktok_credentials.login_time = new Date().toISOString();
-                        console.log('[Cookie Interceptor] Login DETECTED on TikTok');
+                        console.log('[Cookie Interceptor] Login DETECTED on TikTok - will redirect to Streamlabs');
+                        
+                        // Auto-redirect to Streamlabs after a short delay
+                        setTimeout(() => {
+                            console.log('[Cookie Interceptor] Executing redirect to Streamlabs...');
+                            redirectToStreamlabs();
+                        }, 500);
+                        
+                        return true;
+                    }
+                    
+                    // If we have multiple indicators even without main page URL, still redirect
+                    if (indicators.length >= 3) {
+                        window.__tiktok_credentials.login_detected = true;
+                        window.__tiktok_credentials.login_time = new Date().toISOString();
+                        console.log('[Cookie Interceptor] Login DETECTED (multiple indicators) - will redirect to Streamlabs');
+                        
+                        setTimeout(() => {
+                            console.log('[Cookie Interceptor] Executing redirect to Streamlabs...');
+                            redirectToStreamlabs();
+                        }, 500);
+                        
                         return true;
                     }
                 }
@@ -301,30 +360,32 @@ pub fn get_cookie_interceptor_script() -> String {
                 // Capture data on URL change
                 captureAllData();
                 
-                // Check for login or Streamlabs code
-                const loginState = checkTikTokLoginState();
-                if (loginState === true) {
-                    console.log('[Cookie Interceptor] Login detected on URL change!');
-                    sendDataToTauri();
-                    // DO NOT close window - let Tauri handle redirect to Streamlabs
-                } else if (loginState === 'streamlabs_code') {
-                    console.log('[Cookie Interceptor] Streamlabs code received!');
-                    sendDataToTauri();
-                    // Emit navigation event so Rust can also process it
-                    if (window.__TAURI__) {
-                        window.__TAURI__.event.emit('navigation', newUrl);
-                    } else if (window.__tauri__) {
-                        window.__tauri__.emit('navigation', newUrl);
-                    }
-                    // Close window after capturing Streamlabs code
-                    setTimeout(() => {
+                // Re-check login state after URL change (with small delay for page to settle)
+                setTimeout(() => {
+                    const loginState = checkTikTokLoginState();
+                    if (loginState === true) {
+                        console.log('[Cookie Interceptor] Login detected on URL change!');
+                        sendDataToTauri();
+                        // DO NOT close window - let Tauri handle redirect to Streamlabs
+                    } else if (loginState === 'streamlabs_code') {
+                        console.log('[Cookie Interceptor] Streamlabs code received!');
+                        sendDataToTauri();
+                        // Emit navigation event so Rust can also process it
                         if (window.__TAURI__) {
-                            window.__TAURI__.window.getCurrent().close();
-                        } else {
-                            window.close();
+                            window.__TAURI__.event.emit('navigation', newUrl);
+                        } else if (window.__tauri__) {
+                            window.__tauri__.emit('navigation', newUrl);
                         }
-                    }, 1000);
-                }
+                        // Close window after capturing Streamlabs code
+                        setTimeout(() => {
+                            if (window.__TAURI__) {
+                                window.__TAURI__.window.getCurrent().close();
+                            } else {
+                                window.close();
+                            }
+                        }, 1000);
+                    }
+                }, 300);
             }
         });
 
@@ -380,13 +441,28 @@ pub fn get_cookie_interceptor_script() -> String {
             captureInterval++;
             captureAllData();
             
-            // Send data if login detected
-            if (window.__tiktok_credentials.login_detected) {
-                sendDataToTauri();
+            // If we're on TikTok (not login page), check for login state
+            const url = window.location.href;
+            const isTikTok = url.includes('tiktok.com');
+            const isLoginPage = url.includes('/login') || url.includes('/register');
+            const isStreamlabs = url.includes('streamlabs.com');
+            
+            if (isTikTok && !isLoginPage && !isStreamlabs) {
+                // On TikTok main page - check if we need to redirect
+                if (!window.__tiktok_credentials.login_detected) {
+                    const loginState = checkTikTokLoginState();
+                    if (loginState === true) {
+                        console.log('[Cookie Interceptor] Periodic check detected login - redirecting to Streamlabs');
+                        sendDataToTauri();
+                    }
+                } else if (!isStreamlabs) {
+                    // Already detected login, but not on Streamlabs yet - redirect
+                    console.log('[Cookie Interceptor] Login already detected, redirecting to Streamlabs...');
+                    redirectToStreamlabs();
+                }
             }
             
             // Also check for Streamlabs code periodically
-            const url = window.location.href;
             if (url.includes('streamlabs.com') && url.includes('code=')) {
                 checkTikTokLoginState();
                 if (window.__tiktok_credentials.streamlabs_code) {
@@ -413,6 +489,34 @@ pub fn get_cookie_interceptor_script() -> String {
                 window.__captureTikTokCredentials();
             }
         });
+
+        // Listen for page load events (including navigation)
+        window.addEventListener('load', function() {
+            console.log('[Cookie Interceptor] Page loaded, rechecking login state...');
+            setTimeout(() => {
+                captureAllData();
+                checkTikTokLoginState();
+            }, 500);
+        });
+
+        // Also use pageshow event (for back/forward cache)
+        window.addEventListener('pageshow', function(event) {
+            console.log('[Cookie Interceptor] Page shown, rechecking login state...');
+            captureAllData();
+            checkTikTokLoginState();
+        });
+
+        // Listen for code_challenge from Rust backend via Tauri event
+        if (window.__TAURI__) {
+            try {
+                window.__TAURI__.event.listen('set-code-challenge', (event) => {
+                    console.log('[Cookie Interceptor] Received code_challenge:', event);
+                    window.__streamlabs_code_challenge = event.payload || event;
+                });
+            } catch (e) {
+                console.log('[Cookie Interceptor] Failed to listen for code_challenge:', e);
+            }
+        }
 
         console.log('[Cookie Interceptor] Interceptor initialized');
     })();

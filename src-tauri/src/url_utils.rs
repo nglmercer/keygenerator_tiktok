@@ -69,7 +69,7 @@ pub fn extract_auth_code(url: &str) -> Option<String> {
 /// assert!(matches!(classify_url(url), UrlType::StreamlabsAuthWithCode(_)));
 /// ```
 pub fn classify_url(url: &str) -> UrlType {
-    // Check for Streamlabs redirect with code
+    // Check for Streamlabs redirect with code first (highest priority)
     if url.contains("streamlabs.com") && url.contains("code=") {
         if let Some(code) = extract_auth_code(url) {
             return UrlType::StreamlabsAuthWithCode(code);
@@ -82,21 +82,42 @@ pub fn classify_url(url: &str) -> UrlType {
     }
     
     // Check for TikTok login page
-    if url.contains("tiktok.com/login") {
+    if url.contains("tiktok.com/login") || url.contains("tiktok.com/register") {
         return UrlType::TikTokLogin;
     }
     
-    // Check for TikTok logged in state
-    let is_tiktok_logged_in = (url.contains("tiktok.com") && 
-                               !url.contains("/login") && 
-                               !url.contains("webcast") &&
-                               !url.contains("streamlabs")) ||
-                              url.contains("tiktok.com/foryou") ||
-                              url.contains("tiktok.com/discover") ||
-                              (url.contains("tiktok.com/") && !url.contains("/login"));
+    // Check for TikTok logged in state - more comprehensive detection
+    // After login, TikTok redirects to various pages like:
+    // - /foryou
+    // - /discover
+    // - /@username
+    // - /user/username
+    // - /
     
-    if is_tiktok_logged_in {
-        return UrlType::TikTokLoggedIn;
+    if url.contains("tiktok.com") {
+        // Exclude known non-logged-in pages
+        if url.contains("/login") || url.contains("/register") || url.contains("webcast") {
+            return UrlType::TikTokLogin;
+        }
+        
+        // Check for main page indicators
+        let is_main_page = url.contains("tiktok.com/foryou") ||
+                           url.contains("tiktok.com/discover") ||
+                           url.contains("tiktok.com/following") ||
+                           url.contains("tiktok.com/@") ||
+                           url.contains("tiktok.com/user/") ||
+                           url.ends_with("tiktok.com") ||
+                           url.ends_with("tiktok.com/") ||
+                           (url.contains("tiktok.com/") && !url.contains("="));  // Any tiktok.com path without query params
+        
+        if is_main_page {
+            return UrlType::TikTokLoggedIn;
+        }
+        
+        // If on tiktok.com but not login page and has common patterns, consider it logged in
+        if !url.contains("streamlabs") {
+            return UrlType::TikTokLoggedIn;
+        }
     }
     
     UrlType::Unknown
