@@ -1,8 +1,9 @@
-import * as electron from 'electron';
-const { BrowserWindow, session, ipcMain } = electron;
-import type { IpcMainEvent } from 'electron';
+import { Application, type Webview, type BrowserWindow } from "webview-napi";
 import fs from 'fs';
 import path from 'path';
+import { IpcMessageRouter } from "../utils/ipc-handler.js";
+import { IpcMessageType, type WindowContextPayload, type RawStringPayload } from "../utils/ipc-types.js";
+import { safeJsonParse } from "../utils/json.js";
 
 interface AuthResult {
     success: boolean;
@@ -12,19 +13,90 @@ interface AuthResult {
     body?: string;
 }
 
+interface TikTokData {
+    uniqueId?: string;
+    roomId?: string;
+    payload?: any;
+}
+
 export class StreamlabsAuth {
-    private window: electron.BrowserWindow | null = null;
+    private window: BrowserWindow | null = null;
+    private webview: Webview | null = null;
+    private app: Application | null = null;
     private authUrl: string;
     private cookiesPath: string;
     private codeVerifier: string;
     private tokenFetchStarted: boolean = false;
-    private resolveToken: ((value: string) => void) | null = null;
+    private resolveToken: ((value: any) => void) | null = null;
     private rejectToken: ((reason: any) => void) | null = null;
+    private ipcRouter: IpcMessageRouter;
+    private tiktokData: TikTokData = {};
 
     constructor(authUrl: string, cookiesPath: string, codeVerifier: string) {
         this.authUrl = authUrl;
         this.cookiesPath = cookiesPath;
         this.codeVerifier = codeVerifier;
+        
+        // Setup IPC router for handling messages from webview
+        this.ipcRouter = new IpcMessageRouter({
+            enableLogging: true,
+            autoGenerateId: true,
+            autoTimestamp: true,
+            onUnhandledMessage: (msg) => {
+                console.warn("[Webview-Login] Mensaje IPC no manejado:", msg.type);
+            },
+            onParseError: (error, raw) => {
+                console.error("[Webview-Login] Error parseando mensaje:", error.message);
+            },
+        });
+
+        this.setupIPCHandlers();
+    }
+
+    private setupIPCHandlers() {
+        this.ipcRouter
+            .on(IpcMessageType.WINDOW_CONTEXT, (payload: WindowContextPayload) => {
+                console.log("[Webview-Login] Contexto de ventana recibido:");
+                console.log("  - URL:", payload.url.full);
+                
+                // Check login status and success URL
+                this.checkLoginStatus(payload.url.full);
+                this.checkSuccess(payload.url.full);
+            })
+            .on(IpcMessageType.RAW_STRING, (payload: RawStringPayload) => {
+                // Handle raw messages including TikTok WebSocket data
+                if (payload.data.includes("setUniqueId")) {
+                    console.log("[Webview-Login] 🎯 TikTok payload detectado!");
+                    this.handleTikTokPayload(payload.data);
+                }
+            })
+            .on(IpcMessageType.LOG_EVENT, (payload) => {
+                const level = payload.level;
+                const logFn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+                logFn(`[Webview-Login] [${level.toUpperCase()}] ${payload.message}`);
+            });
+    }
+
+    private handleTikTokPayload(data: string) {
+        const result = safeJsonParse<any>(data);
+        if (result.success) {
+            this.tiktokData.payload = result.data;
+            
+            // Extract uniqueId and roomId if present
+            if (result.data && typeof result.data === 'object') {
+                if ('uniqueId' in result.data) {
+                    this.tiktokData.uniqueId = result.data.uniqueId;
+                }
+                if ('roomId' in result.data) {
+                    this.tiktokData.roomId = result.data.roomId;
+                }
+            }
+            
+            console.log("[Webview-Login] TikTok data extraído:", {
+                uniqueId: this.tiktokData.uniqueId,
+                roomId: this.tiktokData.roomId
+            });
+        }
     }
 
     public async findToken(): Promise<any> {
@@ -36,118 +108,216 @@ export class StreamlabsAuth {
     }
 
     private async createWindow() {
-        // In a bundled environment, __dirname might point to the bundle location
-        // We'll try to find preload.js in the same dir as the current script
-        const preloadPath = path.join(process.cwd(), 'src/auth/preload.js');
-        console.log(`[Electron-Login] Preload path: ${preloadPath}`);
+        console.log('[Webview-Login] Iniciando ventana de autenticación...');
 
-        this.window = new BrowserWindow({
+        this.app = new Application();
+        this.window = this.app.createBrowserWindow({
+            title: 'TikTok Auth - Streamlabs',
             width: 1280,
             height: 800,
-            show: true,
-            title: 'TikTok Auth - Streamlabs',
-            webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                sandbox: false,
-                preload: preloadPath,
-            }
         });
 
-        this.setupIPC();
-        this.setupLifecycle();
+        // Create injection script for WebSocket interception and IPC
+        const injectionScript = this.createInjectionScript();
 
+        this.webview = this.window.createWebview({
+            preload: injectionScript,
+            url: "https://www.tiktok.com/login",
+            enableDevtools: true,
+        });
+
+        this.webview.openDevtools();
+
+        // Setup IPC message handling
+        this.webview.onIpcMessage((_e, message) => {
+            const payload = message.toString();
+            this.ipcRouter.handle(payload);
+        });
+
+        // Setup navigation monitoring
+        this.setupNavigationMonitoring();
+
+        // Load cookies if they exist
         await this.loadCookies();
 
-        console.log('[Electron-Login] Navigating to TikTok login...');
-        await this.window.loadURL('https://www.tiktok.com/login');
-
-        this.checkLoginStatus(this.window.webContents.getURL());
+        // Start the app event loop
+        this.startEventLoop();
     }
 
-    private setupIPC() {
-        const logHandler = (event: IpcMainEvent, message: string) => {
-            if (event.sender !== this.window?.webContents) return;
-            console.log(`[Renderer]: ${message}`);
-            if (message === 'TRIGGER_STREAMLABS_AUTH') {
+    private createInjectionScript(): string {
+        return `
+            (function() {
+                // Setup IPC bridge
+                if (!window.ipc) {
+                    console.error('[Renderer] IPC not available');
+                    return;
+                }
+
+                // WebSocket interceptor for TikTok data
+                window.TiktokPayload = "";
+                window.getPayload = function() {
+                    return window.TiktokPayload;
+                };
+
+                const originalSend = WebSocket.prototype.send;
+                WebSocket.prototype.send = function(data) {
+                    if (typeof data === 'string' && data.includes("setUniqueId")) {
+                        console.log("[Renderer] TikTok WebSocket data intercepted", data);
+                        window.TiktokPayload = data;
+                        window.ipc.postMessage(data);
+                    }
+                    return originalSend.apply(this, arguments);
+                };
+
+                // Navigation monitoring
+                let lastUrl = window.location.href;
+                const notifyNavigation = () => {
+                    const context = {
+                        type: 'WINDOW_CONTEXT',
+                        payload: {
+                            url: {
+                                full: window.location.href,
+                                protocol: window.location.protocol,
+                                host: window.location.host,
+                                pathname: window.location.pathname,
+                                hash: window.location.hash,
+                                origin: window.location.origin,
+                                params: Object.fromEntries(new URLSearchParams(window.location.search))
+                            },
+                            document: {
+                                title: document.title,
+                                referrer: document.referrer,
+                                language: navigator.language,
+                                encoding: document.characterSet
+                            },
+                            screen: {
+                                width: window.innerWidth,
+                                height: window.innerHeight,
+                                pixelRatio: window.devicePixelRatio,
+                                orientation: screen.orientation ? screen.orientation.type : 'unknown'
+                            },
+                            userAgent: navigator.userAgent,
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+                    window.ipc.postMessage(JSON.stringify(context));
+                };
+
+                // Monitor URL changes
+                setInterval(() => {
+                    if (window.location.href !== lastUrl) {
+                        lastUrl = window.location.href;
+                        notifyNavigation();
+                    }
+                }, 500);
+
+                // Initial notification
+                notifyNavigation();
+
+                // Inject manual auth button
+                const injectButton = () => {
+                    if (document.getElementById('sl-auth-btn') || !window.location.href.includes('tiktok.com')) return;
+                    
+                    const btn = document.createElement('button');
+                    btn.id = 'sl-auth-btn';
+                    btn.innerText = 'Start Streamlabs Auth';
+                    btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;padding:12px 20px;background:#00f2ea;color:#000;font-weight:bold;border:none;border-radius:5px;cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.1);font-family:sans-serif;';
+                    btn.onclick = function() {
+                        const msg = {
+                            type: 'USER_ACTION',
+                            payload: { action: 'TRIGGER_STREAMLABS_AUTH', timestamp: Date.now() }
+                        };
+                        window.ipc.postMessage(JSON.stringify(msg));
+                    };
+                    document.body.appendChild(btn);
+                    console.log('[Renderer] Botón de auth inyectado');
+                };
+
+                // Try to inject button periodically
+                setInterval(injectButton, 2000);
+
+                console.log("[Renderer] 💉 Scripts de inyección inicializados");
+            })();
+        `;
+    }
+
+    private setupNavigationMonitoring() {
+        // Monitor URL changes via IPC
+        this.ipcRouter.on(IpcMessageType.USER_ACTION, (payload) => {
+            if (payload.action === 'TRIGGER_STREAMLABS_AUTH') {
+                console.log('[Webview-Login] Botón de auth presionado manualmente');
                 this.forceNavigateAuth();
             }
-        };
-
-        const resultHandler = (event: IpcMainEvent, result: AuthResult) => {
-            if (event.sender !== this.window?.webContents) return;
-            this.handleFetchResult(result);
-        };
-
-        ipcMain.on('log-console', logHandler);
-        ipcMain.on('fetch-result', resultHandler);
-
-        // Cleanup handlers when window is closed
-        this.window?.on('closed', () => {
-            ipcMain.removeListener('log-console', logHandler);
-            ipcMain.removeListener('fetch-result', resultHandler);
         });
     }
 
-    private setupLifecycle() {
-        if (!this.window) return;
-
-        this.window.webContents.on('did-navigate', (_: any, url: string) => {
-            this.checkLoginStatus(url);
-            this.checkSuccess(url);
-        });
-
-        this.window.webContents.on('did-navigate-in-page', (_: any, url: string) => {
-            this.checkSuccess(url);
-        });
-
-        this.window.webContents.on('did-finish-load', () => {
-            this.injectManualAuthButton();
-        });
-
-        this.window.on('closed', () => {
-            this.window = null;
-            if (!this.tokenFetchStarted) {
-                this.rejectToken?.(new Error('Window closed by user'));
+    private startEventLoop() {
+        const poll = () => {
+            if (this.app && this.app.runIteration()) {
+                setTimeout(poll, 10);
+            } else {
+                if (!this.tokenFetchStarted) {
+                    this.rejectToken?.(new Error('Window closed by user'));
+                }
             }
-        });
+        };
+        poll();
     }
 
     private async loadCookies() {
         if (fs.existsSync(this.cookiesPath)) {
             try {
                 const cookies = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
-                const promises = cookies.map((cookie: any) => {
-                    const scheme = cookie.secure ? 'https' : 'http';
-                    const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
-                    const url = `${scheme}://${domain}${cookie.path}`;
-                    return session.defaultSession.cookies.set({ ...cookie, url });
-                });
-                await Promise.all(promises);
-                console.log('[Electron-Login] Cookies loaded.');
+                // Note: webview-napi may have different cookie handling
+                // For now, we just log that cookies exist
+                console.log('[Webview-Login] Cookies file found:', cookies.length, 'cookies');
+                
+                // Inject cookies via JavaScript if needed
+                if (this.webview && cookies.length > 0) {
+                    const cookieScript = cookies.map((cookie: any) => {
+                        const name = cookie.name;
+                        const value = cookie.value;
+                        const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
+                        const path = cookie.path || '/';
+                        const secure = cookie.secure ? 'true' : 'false';
+                        return `document.cookie = "${name}=${value}; domain=${domain}; path=${path}; secure=${secure}";`;
+                    }).join('\n');
+                    
+                    try {
+                        this.webview.evaluateScript(cookieScript);
+                    } catch (e: any) {
+                        console.error('[Webview-Login] Error setting cookies:', e);
+                    }
+                }
             } catch (e) {
-                console.error('[Electron-Login] Failed to load cookies:', e);
+                console.error('[Webview-Login] Failed to load cookies:', e);
             }
         }
     }
 
     private async saveCookies() {
         try {
-            const cookies = await session.defaultSession.cookies.get({});
-            fs.writeFileSync(this.cookiesPath, JSON.stringify(cookies, null, 2));
-            console.log('[Electron-Login] Cookies saved.');
+            // Extract cookies via JavaScript evaluation
+            if (this.webview) {
+                this.webview.evaluateScript(`
+                    document.cookie.split(';').map(c => {
+                        const [name, ...valueParts] = c.trim().split('=');
+                        return { name, value: valueParts.join('=') };
+                    })
+                `);
+                console.log('[Webview-Login] Cookies save attempted.');
+            }
         } catch (e) {
-            console.error('[Electron-Login] Failed to save cookies:', e);
+            console.error('[Webview-Login] Failed to save cookies:', e);
         }
     }
 
     private checkLoginStatus(url: string) {
         if ((url.includes('tiktok.com') && !url.includes('login') && !url.includes('streamlabs')) || url.includes('/foryou')) {
-            console.log('[Electron-Login] Login detected. Preparing to navigate to Streamlabs Auth...');
+            console.log('[Webview-Login] Login detected. Preparing to navigate to Streamlabs Auth...');
 
             setTimeout(() => {
-                const current = this.window?.webContents.getURL();
-                if (current && !current.includes('streamlabs')) {
+                if (!url.includes('streamlabs')) {
                     this.forceNavigateAuth();
                 }
             }, 2000);
@@ -155,8 +325,12 @@ export class StreamlabsAuth {
     }
 
     private forceNavigateAuth() {
-        console.log(`[Electron-Login] Navigating to Auth URL: ${this.authUrl}`);
-        this.window?.loadURL(this.authUrl).catch(e => console.error('Failed to load Auth URL:', e));
+        console.log(`[Webview-Login] Navigating to Auth URL: ${this.authUrl}`);
+        try {
+            this.webview?.evaluateScript(`window.location.href = "${this.authUrl}";`);
+        } catch (e: any) {
+            console.error('[Webview-Login] Failed to navigate to Auth URL:', e);
+        }
     }
 
     private checkSuccess(url: string) {
@@ -174,85 +348,75 @@ export class StreamlabsAuth {
 
         if (isSuccess && !this.tokenFetchStarted && code) {
             this.tokenFetchStarted = true;
-            console.log('[Electron-Login] Success URL detected:', url);
-            console.log('[Electron-Login] Authorization code extracted:', code);
-            console.log('[Electron-Login] Starting token fetch...');
+            console.log('[Webview-Login] Success URL detected:', url);
+            console.log('[Webview-Login] Authorization code extracted:', code);
+            console.log('[Webview-Login] Starting token fetch...');
 
             this.saveCookies().then(() => {
-                this.executeTokenFetch(code!);
+                this.executeTokenFetch(code);
             });
         }
     }
 
-    private injectManualAuthButton() {
-        const script = `
-        (function() {
-            if (document.getElementById('sl-auth-btn') || !window.location.href.includes('tiktok.com')) return;
-            const btn = document.createElement('button');
-            btn.id = 'sl-auth-btn';
-            btn.innerText = 'Start Streamlabs Auth';
-            btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;padding:12px 20px;background:#00f2ea;color:#000;font-weight:bold;border:none;border-radius:5px;cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.1);font-family:sans-serif;';
-            btn.onclick = function() {
-                window.electronAPI.log('TRIGGER_STREAMLABS_AUTH');
-            };
-            document.body.appendChild(btn);
-        })();
-        `;
-        this.window?.webContents.executeJavaScript(script).catch(() => { });
-    }
-
     private async executeTokenFetch(code: string) {
         if (!this.codeVerifier) {
-            console.error('[Electron-Login] No CodeVerifier found!');
+            console.error('[Webview-Login] No CodeVerifier found!');
             this.rejectToken?.(new Error('No CodeVerifier found'));
             return;
         }
 
-        console.log('[Electron-Login] Fetching token from browser context...');
+        console.log('[Webview-Login] Fetching token from browser context...');
 
-        const fetchCode = `
-        (async () => {
-            try {
-                const res = await fetch('https://streamlabs.com/api/v5/slobs/auth/data?code=${code}&code_verifier=${this.codeVerifier}', {
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: { 
-                        'Accept': 'application/json', 
-                        'X-Requested-With': 'XMLHttpRequest' 
-                    }
-                });
-                const text = await res.text();
+        const fetchScript = `
+            (async () => {
                 try {
-                    const json = JSON.parse(text);
-                    return { success: true, data: json, status: res.status };
-                } catch(e) {
-                    return { success: false, error: 'JSON Parse Error', body: text, status: res.status };
+                    const res = await fetch('https://streamlabs.com/api/v5/slobs/auth/data?code=${code}&code_verifier=${this.codeVerifier}', {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: { 
+                            'Accept': 'application/json', 
+                            'X-Requested-With': 'XMLHttpRequest' 
+                        }
+                    });
+                    const text = await res.text();
+                    try {
+                        const json = JSON.parse(text);
+                        return { success: true, data: json, status: res.status };
+                    } catch(e) {
+                        return { success: false, error: 'JSON Parse Error', body: text, status: res.status };
+                    }
+                } catch (err) {
+                    return { success: false, error: err.toString() };
                 }
-            } catch (err) {
-                return { success: false, error: err.toString() };
-            }
-        })()
+            })()
         `;
 
         try {
-            const result = await this.window?.webContents.executeJavaScript(fetchCode);
-            this.handleFetchResult(result);
+            const result = this.webview?.evaluateScript(fetchScript);
+            this.handleFetchResult(result as unknown as AuthResult);
         } catch (err: any) {
-            console.error('[Electron-Login] executeJavaScript error:', err.message);
+            console.error('[Webview-Login] executeScript error:', err.message);
             this.handleFetchResult({ success: false, error: err.message });
         }
     }
 
     private handleFetchResult(result: AuthResult) {
-        console.log('[Electron-Login] Token fetch result:', JSON.stringify(result));
+        console.log('[Webview-Login] Token fetch result:', JSON.stringify(result));
 
         if (result.success && result.data?.success) {
             const authData = result.data.data;
-            console.log('[Electron-Login] Auth data received successfully');
-            this.resolveToken?.(authData);
+            console.log('[Webview-Login] Auth data received successfully');
+            
+            // Include TikTok data in the result
+            const finalResult = {
+                ...authData,
+                tiktok: this.tiktokData
+            };
+            
+            this.resolveToken?.(finalResult);
             this.cleanup();
         } else {
-            console.error('[Electron-Login] Error in fetch result:', JSON.stringify(result));
+            console.error('[Webview-Login] Error in fetch result:', JSON.stringify(result));
             this.rejectToken?.(new Error(`Fetch failed: ${JSON.stringify(result)}`));
             this.cleanup();
         }
@@ -261,8 +425,19 @@ export class StreamlabsAuth {
     private async cleanup() {
         await this.saveCookies();
         if (this.window) {
-            this.window.close();
+            // Close window - in webview-napi we just stop the app
             this.window = null;
         }
+        if (this.app) {
+            // The app will stop when runIteration returns false
+            this.app = null;
+        }
+    }
+
+    /**
+     * Get the captured TikTok data
+     */
+    public getTikTokData(): TikTokData {
+        return this.tiktokData;
     }
 }

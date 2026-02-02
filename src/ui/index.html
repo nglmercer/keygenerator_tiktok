@@ -4,10 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'">
     <title>TikTok Stream Key Generator</title>
-    <link rel="stylesheet" href="style.css">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <link rel="stylesheet" href="./style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -89,7 +88,10 @@
             </div>
         </footer>
     </div>
-    <script src="renderer.js"></script>
+    <script type="module">
+        console.log("import.meta.url",import.meta.url); 
+    </script>
+    <script src="./renderer.js"></script>
 </body>
 
 </html>

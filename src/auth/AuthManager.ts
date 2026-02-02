@@ -3,6 +3,14 @@ import fs from 'fs';
 import crypto from 'node:crypto';
 import { StreamlabsAuth } from './electron-login.ts';
 
+export interface AuthData {
+    oauth_token: string;
+    uniqueId?: string;
+    roomId?: string;
+    cookies?: any[];
+    [key: string]: any;
+}
+
 export class AuthManager {
     private CLIENT_KEY = 'awdjaq9ide8ofrtz';
     private REDIRECT_URI = 'https://streamlabs.com/tiktok/auth';
@@ -34,6 +42,11 @@ export class AuthManager {
     }
 
     async retrieveToken(): Promise<string> {
+        const authData = await this.retrieveAuthData();
+        return authData.oauth_token;
+    }
+
+    async retrieveAuthData(): Promise<AuthData> {
         const tokenPath = path.resolve(process.cwd(), 'tokens.json');
 
         // Try to load existing token
@@ -42,7 +55,7 @@ export class AuthManager {
                 const saved = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
                 if (saved && saved.oauth_token) {
                     console.log('[AuthManager] Using saved token from tokens.json');
-                    return saved.oauth_token;
+                    return saved;
                 }
             } catch (e) {
                 console.error('[AuthManager] Failed to load saved tokens:', e);
@@ -52,7 +65,7 @@ export class AuthManager {
         const authUrl = await this.getAuthUrl();
         const cookiePathAbs = path.resolve(process.cwd(), this.COOKIES_PATH);
 
-        console.log('[AuthManager] Starting authentication via internal Electron window...');
+        console.log('[AuthManager] Starting authentication via internal webview window...');
 
         const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier);
         const authData = await auth.findToken();
@@ -61,6 +74,7 @@ export class AuthManager {
         fs.writeFileSync(tokenPath, JSON.stringify(authData, null, 2));
         console.log('[AuthManager] Tokens saved to tokens.json');
 
-        return authData.oauth_token;
+        return authData;
     }
+
 }
