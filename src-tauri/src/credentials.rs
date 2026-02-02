@@ -45,6 +45,7 @@ impl Credentials {
     }
 
     /// Checks if the credentials contain any data
+    #[allow(dead_code)]
     pub fn has_data(&self) -> bool {
         self.cookies.as_object().map(|o| !o.is_empty()).unwrap_or(false)
             || self.auth_code.is_some()
@@ -52,6 +53,7 @@ impl Credentials {
     }
 
     /// Checks if the credentials contain TikTok cookies
+    #[allow(dead_code)]
     pub fn has_tiktok_cookies(&self) -> bool {
         self.cookies
             .get("data")
@@ -75,8 +77,10 @@ pub enum CredentialError {
     #[error("JSON serialization error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("No credentials available")]
+    #[allow(dead_code)]
     NoCredentials,
     #[error("Invalid credential format")]
+    #[allow(dead_code)]
     InvalidFormat,
 }
 
@@ -134,6 +138,7 @@ pub fn save_credentials(credentials: &Credentials, path: Option<&Path>) -> Resul
 ///
 /// # Returns
 /// `Ok(credentials)` if successful, `Err(CredentialError)` otherwise
+#[allow(dead_code)]
 pub fn load_credentials(path: Option<&Path>) -> Result<Credentials> {
     let path = path.unwrap_or_else(|| Path::new(CREDENTIALS_FILE));
     let content = fs::read_to_string(path)?;
@@ -231,6 +236,7 @@ pub fn extract_oauth_token(tokens: &serde_json::Value) -> Option<String> {
 }
 
 /// A thread-safe credential manager for runtime credential storage
+#[allow(dead_code)]
 pub struct CredentialManager {
     cookies: Arc<Mutex<Option<serde_json::Value>>>,
     auth_code: Arc<Mutex<Option<String>>>,
@@ -240,6 +246,7 @@ pub struct CredentialManager {
 
 impl CredentialManager {
     /// Creates a new CredentialManager
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             cookies: Arc::new(Mutex::new(None)),
@@ -250,46 +257,55 @@ impl CredentialManager {
     }
 
     /// Sets the captured cookies
+    #[allow(dead_code)]
     pub fn set_cookies(&self, cookies: serde_json::Value) {
         *self.cookies.lock() = Some(cookies);
     }
 
     /// Gets the captured cookies
+    #[allow(dead_code)]
     pub fn get_cookies(&self) -> Option<serde_json::Value> {
         self.cookies.lock().clone()
     }
 
     /// Sets the authorization code
+    #[allow(dead_code)]
     pub fn set_auth_code(&self, code: String) {
         *self.auth_code.lock() = Some(code);
     }
 
     /// Gets the authorization code
+    #[allow(dead_code)]
     pub fn get_auth_code(&self) -> Option<String> {
         self.auth_code.lock().clone()
     }
 
     /// Sets the code challenge
+    #[allow(dead_code)]
     pub fn set_code_challenge(&self, challenge: String) {
         *self.code_challenge.lock() = Some(challenge);
     }
 
     /// Gets the code challenge
+    #[allow(dead_code)]
     pub fn get_code_challenge(&self) -> Option<String> {
         self.code_challenge.lock().clone()
     }
 
     /// Sets the OAuth token
+    #[allow(dead_code)]
     pub fn set_oauth_token(&self, token: String) {
         *self.oauth_token.lock() = Some(token);
     }
 
     /// Gets the OAuth token
+    #[allow(dead_code)]
     pub fn get_oauth_token(&self) -> Option<String> {
         self.oauth_token.lock().clone()
     }
 
     /// Builds a Credentials struct from the current state
+    #[allow(dead_code)]
     pub fn build_credentials(&self) -> Credentials {
         Credentials {
             cookies: self.get_cookies().unwrap_or_else(|| serde_json::json!({})),
@@ -302,6 +318,7 @@ impl CredentialManager {
     }
 
     /// Saves all credentials to files
+    #[allow(dead_code)]
     pub fn save_all(&self) -> Result<()> {
         if let Some(cookies) = self.get_cookies() {
             save_cookies(&cookies, None)?;
@@ -319,6 +336,7 @@ impl CredentialManager {
     }
 
     /// Clears all stored credentials
+    #[allow(dead_code)]
     pub fn clear(&self) {
         *self.cookies.lock() = None;
         *self.auth_code.lock() = None;

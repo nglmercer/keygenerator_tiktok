@@ -14,7 +14,7 @@
     const resultSection = document.getElementById('result-section');
     const startBtn = document.getElementById('start-btn');
     const stopBtn = document.getElementById('stop-btn');
-    const gameSearch = document.getElementById('game-search');
+    const gameSearch = document.getElementById('game_search');
     const searchResults = document.getElementById('search-results');
     const streamTitle = document.getElementById('stream-title');
     const logConsole = document.getElementById('log-console');
@@ -102,27 +102,73 @@
         }
     }
 
-    // Listen for auth-code-received via postMessage (more reliable than Tauri event API)
+    // Listen for auth-code-received via Tauri event system
     if (isTauri) {
-        window.addEventListener('message', async (event) => {
-            // Handle auth code from Streamlabs redirect
-            if (event.data && event.data.type === 'auth-code-received') {
-                log('Auth code received from Streamlabs!', 'success');
-                log('Completing authentication...', 'info');
+        // Listen for auth code from the login window
+        window.addEventListener('tauri://auth-code-received', async (event) => {
+            log('Auth code received from Streamlabs!', 'success');
+            log('Completing authentication...', 'info');
+            
+            // Stop polling since we got the event
+            if (authPollInterval) {
+                clearInterval(authPollInterval);
+                authPollInterval = null;
+            }
+            
+            // Complete the authentication
+            const completeResult = await invoke('complete_authentication');
+            
+            if (completeResult && completeResult.success) {
+                log('Authentication complete! Token received.', 'success');
+                // Close login window
+                await invoke('close_login_window');
                 
-                // Stop polling since we got the event
+                // Remove instructions
+                const instructions = document.querySelector('.login-instructions');
+                if (instructions) {
+                    instructions.remove();
+                }
+                
+                // Update main UI
+                updateUI(true);
+            } else {
+                log('Authentication completion failed: ' + (completeResult?.message || 'Unknown error'), 'error');
+                
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="error-text">Authentication failed. Please try again.</span>';
+                }
+                
+                // Show login button again
+                loginBtn.style.display = 'inline-flex';
+            }
+        });
+
+        // Listen for credentials captured
+        window.addEventListener('tauri://credentials-captured', async (event) => {
+            const data = event.detail;
+            log('Credentials captured event received', 'info');
+            
+            if (data && data.data && data.data.streamlabs_code) {
+                log('Streamlabs authorization code received! Completing authentication...', 'success');
+                
+                // Stop polling
                 if (authPollInterval) {
                     clearInterval(authPollInterval);
                     authPollInterval = null;
                 }
                 
-                
-                // Complete the authentication
+                // Complete the authentication (exchange code for token)
                 const completeResult = await invoke('complete_authentication');
                 
                 if (completeResult && completeResult.success) {
                     log('Authentication complete! Token received.', 'success');
-                    // Close login window
+                    
+                    // Update UI
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="success-text">All done! You can now start streaming.</span>';
+                    }
+                    
+                    // Close login window and update UI
                     await invoke('close_login_window');
                     
                     // Remove instructions
@@ -146,18 +192,11 @@
                 return;
             }
             
-            // Handle TikTok cookies from cached login
-            if (event.data && event.data.type === 'tiktok-cookies') {
-                log('TikTok cookies received from cached login!', 'success');
-                log('Saving credentials...', 'info');
+            // Check for TikTok cookies
+            if (data && data.data && data.data.cookies && Object.keys(data.data.cookies).length > 0) {
+                log('TikTok cookies received!', 'success');
                 
-                // Stop polling if we got cookies
-                if (authPollInterval) {
-                    clearInterval(authPollInterval);
-                    authPollInterval = null;
-                }
-                
-                // Save credentials
+                // Save credentials automatically
                 const saveResult = await invoke('save_credentials_to_file');
                 if (saveResult && saveResult.success) {
                     log('TikTok credentials saved!', 'success');
@@ -165,7 +204,8 @@
                 return;
             }
         });
-        log('Auth listener set up via postMessage', 'success');
+        
+        log('Auth listeners set up via Tauri events', 'success');
     }
     
     // TikTok Login Button Handler
@@ -177,18 +217,6 @@
             if (result && result.success) {
                 log('TikTok login window opened!', 'success');
                 log('Please complete the login process in the new window.', 'info');
-                
-                // Inject the interceptor script into the login window
-                setTimeout(async () => {
-                    try {
-                        const injectResult = await invoke('inject_interceptor_to_login_window');
-                        if (injectResult && injectResult.success) {
-                            log('Cookie interceptor injected into login window', 'info');
-                        }
-                    } catch (e) {
-                        log('Failed to inject interceptor: ' + e.message, 'error');
-                    }
-                }, 2000);
                 
                 // Show instructions
                 showLoginInstructions();
@@ -365,7 +393,7 @@
                 loginBtn.style.display = 'none';
             } else {
                 log('No credentials captured yet. Please complete login first.', 'warning');
-                log('Tip: Make sure you are logged in on TikTok before checking status.');
+                log('Tip: Make sure you are logged in on TikTok before checking status.', 'info');
             }
         } catch (e) {
             log('Error checking login status: ' + e.message, 'error');

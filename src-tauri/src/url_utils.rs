@@ -12,6 +12,7 @@ pub enum UrlType {
     /// TikTok main page (logged in)
     TikTokLoggedIn,
     /// Streamlabs login page
+    #[allow(dead_code)]
     StreamlabsLogin,
     /// Streamlabs auth page with code
     StreamlabsAuthWithCode(String),
@@ -108,6 +109,7 @@ pub fn classify_url(url: &str) -> UrlType {
 ///
 /// # Returns
 /// `true` if the URL contains tiktok.com, `false` otherwise.
+#[allow(dead_code)]
 pub fn is_tiktok_url(url: &str) -> bool {
     url.contains("tiktok.com")
 }
@@ -119,6 +121,7 @@ pub fn is_tiktok_url(url: &str) -> bool {
 ///
 /// # Returns
 /// `true` if the URL contains streamlabs.com, `false` otherwise.
+#[allow(dead_code)]
 pub fn is_streamlabs_url(url: &str) -> bool {
     url.contains("streamlabs.com")
 }
@@ -133,6 +136,7 @@ pub fn is_streamlabs_url(url: &str) -> bool {
 ///
 /// # Returns
 /// `true` if the URL suggests a logged-in state, `false` otherwise.
+#[allow(dead_code)]
 pub fn is_tiktok_logged_in(url: &str) -> bool {
     matches!(classify_url(url), UrlType::TikTokLoggedIn)
 }
@@ -144,6 +148,7 @@ pub fn is_tiktok_logged_in(url: &str) -> bool {
 ///
 /// # Returns
 /// `true` if the URL contains a code parameter, `false` otherwise.
+#[allow(dead_code)]
 pub fn has_auth_code(url: &str) -> bool {
     url.contains("code=")
 }
@@ -155,6 +160,7 @@ pub fn has_auth_code(url: &str) -> bool {
 ///
 /// # Returns
 /// A formatted Streamlabs authorization URL.
+#[allow(dead_code)]
 pub fn build_streamlabs_auth_url(code_challenge: &str) -> String {
     format!(
         "https://streamlabs.com/m/login?force_verify=1&external=mobile&skip_splash=1&tiktok&code_challenge={}",

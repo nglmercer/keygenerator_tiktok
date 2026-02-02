@@ -32,12 +32,16 @@ pub struct StreamResponse {
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
     #[error("Stream search failed: {0}")]
+    #[allow(dead_code)]
     SearchFailed(String),
     #[error("Stream start failed: {0}")]
+    #[allow(dead_code)]
     StartFailed(String),
     #[error("Stream end failed: {0}")]
+    #[allow(dead_code)]
     EndFailed(String),
     #[error("Invalid stream parameters: {0}")]
+    #[allow(dead_code)]
     InvalidParameters(String),
 }
 
@@ -130,19 +134,20 @@ pub async fn stream_end() -> Result<bool> {
 ///
 /// # Returns
 /// `Ok(())` if parameters are valid, `Err(StreamError)` otherwise
+#[allow(dead_code)]
 pub fn validate_stream_params(title: &str, category: &str) -> Result<()> {
     if title.trim().is_empty() {
         return Err(StreamError::InvalidParameters("Title cannot be empty".to_string()));
     }
-    
+
     if title.len() > 100 {
         return Err(StreamError::InvalidParameters("Title too long (max 100 characters)".to_string()));
     }
-    
+
     if category.trim().is_empty() {
         return Err(StreamError::InvalidParameters("Category cannot be empty".to_string()));
     }
-    
+
     Ok(())
 }
 

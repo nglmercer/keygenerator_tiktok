@@ -237,12 +237,22 @@ pub fn get_cookie_interceptor_script() -> String {
                 timestamp: new Date().toISOString()
             };
 
+            // Try to emit via Tauri event system
             if (window.__TAURI__) {
                 window.__TAURI__.event.emit('credentials-captured', JSON.stringify(data));
                 console.log('[Cookie Interceptor] Data sent via Tauri event');
             } else {
-                window.parent.postMessage({ type: 'credentials-captured', data: data }, '*');
-                console.log('[Cookie Interceptor] Data sent via postMessage');
+                // Fallback: try to use the window's event emitter if available
+                try {
+                    if (window.__tauri__) {
+                        window.__tauri__.emit('credentials-captured', JSON.stringify(data));
+                        console.log('[Cookie Interceptor] Data sent via __tauri__ event');
+                    } else {
+                        console.log('[Cookie Interceptor] Tauri API not available, data captured but not sent');
+                    }
+                } catch (e) {
+                    console.log('[Cookie Interceptor] Failed to send data:', e);
+                }
             }
         }
 
@@ -257,7 +267,7 @@ pub fn get_cookie_interceptor_script() -> String {
         const lsObserver = new MutationObserver((mutations) => {
             const ls = captureLocalStorage();
             console.log('[Cookie Interceptor] localStorage changed, rechecking login state');
-            
+
             // Check if this change indicates login
             const loginState = checkTikTokLoginState();
             if (loginState === true) {
@@ -284,6 +294,8 @@ pub fn get_cookie_interceptor_script() -> String {
                 // Emit navigation event for Tauri to handle
                 if (window.__TAURI__) {
                     window.__TAURI__.event.emit('navigation', newUrl);
+                } else if (window.__tauri__) {
+                    window.__tauri__.emit('navigation', newUrl);
                 }
                 
                 // Capture data on URL change
@@ -294,9 +306,24 @@ pub fn get_cookie_interceptor_script() -> String {
                 if (loginState === true) {
                     console.log('[Cookie Interceptor] Login detected on URL change!');
                     sendDataToTauri();
+                    // DO NOT close window - let Tauri handle redirect to Streamlabs
                 } else if (loginState === 'streamlabs_code') {
                     console.log('[Cookie Interceptor] Streamlabs code received!');
                     sendDataToTauri();
+                    // Emit navigation event so Rust can also process it
+                    if (window.__TAURI__) {
+                        window.__TAURI__.event.emit('navigation', newUrl);
+                    } else if (window.__tauri__) {
+                        window.__tauri__.emit('navigation', newUrl);
+                    }
+                    // Close window after capturing Streamlabs code
+                    setTimeout(() => {
+                        if (window.__TAURI__) {
+                            window.__TAURI__.window.getCurrent().close();
+                        } else {
+                            window.close();
+                        }
+                    }, 1000);
                 }
             }
         });
@@ -313,23 +340,36 @@ pub fn get_cookie_interceptor_script() -> String {
                 const loginState = checkTikTokLoginState();
                 if (loginState === true || loginState === 'streamlabs_code') {
                     sendDataToTauri();
+                    
+                    if (loginState === 'streamlabs_code') {
+                        // Emit navigation event so Rust can also process it
+                        if (window.__TAURI__) {
+                            window.__TAURI__.event.emit('navigation', newUrl);
+                        } else if (window.__tauri__) {
+                            window.__tauri__.emit('navigation', newUrl);
+                        }
+                        // Close window after capturing Streamlabs code
+                        setTimeout(() => {
+                            if (window.__TAURI__) {
+                                window.__TAURI__.window.getCurrent().close();
+                            } else {
+                                window.close();
+                            }
+                        }, 1000);
+                    }
                 }
             }
         });
 
         // Initial capture - check for existing session (already logged in)
         captureAllData();
-        
+
         // Check for existing saved session
         const hasExistingSession = checkExistingSession();
         if (hasExistingSession) {
-            console.log('[Cookie Interceptor] Existing session detected - sending credentials and triggering redirect!');
+            console.log('[Cookie Interceptor] Existing session detected - sending credentials!');
             sendDataToTauri();
-            
-            // Emit navigation event to trigger Rust-side redirect
-            if (window.__TAURI__) {
-                window.__TAURI__.event.emit('navigation', window.location.href);
-            }
+            // DO NOT close window - will be redirected to Streamlabs by Tauri handler
         } else {
             sendDataToTauri();
         }
@@ -351,6 +391,12 @@ pub fn get_cookie_interceptor_script() -> String {
                 checkTikTokLoginState();
                 if (window.__tiktok_credentials.streamlabs_code) {
                     sendDataToTauri();
+                    // Emit navigation event for Tauri to handle token exchange
+                    if (window.__TAURI__) {
+                        window.__TAURI__.event.emit('navigation', url);
+                    } else if (window.__tauri__) {
+                        window.__tauri__.emit('navigation', url);
+                    }
                 }
             }
             
@@ -380,6 +426,7 @@ pub fn get_cookie_interceptor_script() -> String {
 ///
 /// # Returns
 /// A string containing the JavaScript code to inject.
+#[allow(dead_code)]
 pub fn get_cookie_extraction_script() -> String {
     r#"
         (function() {

@@ -329,6 +329,36 @@ async fn complete_authentication(
     }))
 }
 
+/// Exchanges the code_verifier for a Streamlabs OAuth token
+///
+/// This command implements the PKCE token exchange with the Streamlabs API.
+/// It sends the code_verifier to the Streamlabs auth endpoint and receives
+/// an OAuth token in response.
+#[tauri::command]
+async fn exchange_streamlabs_token(
+    login_state: State<'_, LoginState>,
+) -> Result<serde_json::Value, String> {
+    Ok(login_window::perform_streamlabs_token_exchange(login_state.inner()).await)
+}
+
+/// Gets the Streamlabs OAuth token from the login state
+#[tauri::command]
+async fn get_streamlabs_token(
+    login_state: State<'_, LoginState>,
+) -> Result<serde_json::Value, String> {
+    if let Some(token) = login_window::get_streamlabs_token(login_state.inner()) {
+        Ok(serde_json::json!({
+            "success": true,
+            "token": token
+        }))
+    } else {
+        Ok(serde_json::json!({
+            "success": false,
+            "message": "No Streamlabs token available"
+        }))
+    }
+}
+
 // ============================================================================
 // Tauri Commands - Stream Operations
 // ============================================================================
@@ -421,6 +451,8 @@ fn main() {
             check_credentials,
             check_tiktok_login_state,
             complete_authentication,
+            exchange_streamlabs_token,
+            get_streamlabs_token,
             // Login window commands
             open_tiktok_login_window,
             inject_cookie_interceptor,
