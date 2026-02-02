@@ -1703,6 +1703,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "uuid",
  "webbrowser",
 ]
 

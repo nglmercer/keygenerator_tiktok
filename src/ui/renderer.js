@@ -34,6 +34,60 @@
         console.log(`[Renderer] ${msg}`);
     }
 
+    // Check existing login state on page load
+    async function checkExistingLoginState() {
+        if (!isTauri) return;
+        
+        log('Checking existing login state...', 'info');
+        
+        try {
+            const state = await invoke('check_tiktok_login_state');
+            
+            if (state && state.success) {
+                log(`Existing login state: ${state.state}`, 'info');
+                
+                switch (state.state) {
+                    case 'fully_authenticated':
+                        log('Already authenticated! Loading UI...', 'success');
+                        updateUI(true);
+                        break;
+                        
+                    case 'streamlabs_auth_pending':
+                        log('Pending Streamlabs authentication, completing...', 'info');
+                        if (state.auth_code) {
+                            // Store auth code and complete authentication
+                            const completeResult = await invoke('complete_authentication');
+                            if (completeResult && completeResult.success) {
+                                log('Authentication complete!', 'success');
+                                updateUI(true);
+                            }
+                        }
+                        break;
+                        
+                    case 'tiktok_logged_in':
+                        log('TikTok already logged in, redirecting to Streamlabs...', 'info');
+                        // Open login window which will redirect to Streamlabs
+                        const result = await invoke('open_tiktok_login_window');
+                        if (result && result.success) {
+                            log('Login window opened, redirecting to Streamlabs...', 'info');
+                            showLoginInstructions();
+                        }
+                        break;
+                        
+                    default:
+                        log('Not logged in, ready for login', 'info');
+                }
+            } else {
+                log('Not logged in, ready for login', 'info');
+            }
+        } catch (e) {
+            log('Error checking login state: ' + e.message, 'error');
+        }
+    }
+    
+    // Check login state on page load
+    checkExistingLoginState();
+
     // Helper function to invoke Tauri commands
     async function invoke(command, args = {}) {
         if (!isTauri) {
@@ -48,18 +102,89 @@
         }
     }
 
-    // Listen for Tauri events
-    function listen(event, callback) {
-        if (!isTauri) return { unsubscribe: () => {} };
-        return window.__TAURI__.event.listen(event, callback);
+    // Listen for auth-code-received via postMessage (more reliable than Tauri event API)
+    if (isTauri) {
+        window.addEventListener('message', async (event) => {
+            // Handle auth code from Streamlabs redirect
+            if (event.data && event.data.type === 'auth-code-received') {
+                log('Auth code received from Streamlabs!', 'success');
+                log('Completing authentication...', 'info');
+                
+                // Stop polling since we got the event
+                if (authPollInterval) {
+                    clearInterval(authPollInterval);
+                    authPollInterval = null;
+                }
+                
+                // Update UI
+                const statusEl = document.querySelector('.auto-status');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="success-text">Exchanging code for token...</span>';
+                }
+                
+                // Complete the authentication
+                const completeResult = await invoke('complete_authentication');
+                
+                if (completeResult && completeResult.success) {
+                    log('Authentication complete! Token received.', 'success');
+                    
+                    // Update UI
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="success-text">All done! You can now start streaming.</span>';
+                    }
+                    
+                    // Close login window
+                    await invoke('close_login_window');
+                    
+                    // Remove instructions
+                    const instructions = document.querySelector('.login-instructions');
+                    if (instructions) {
+                        instructions.remove();
+                    }
+                    
+                    // Update main UI
+                    updateUI(true);
+                } else {
+                    log('Authentication completion failed: ' + (completeResult?.message || 'Unknown error'), 'error');
+                    
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="error-text">Authentication failed. Please try again.</span>';
+                    }
+                    
+                    // Show login button again
+                    loginBtn.style.display = 'inline-flex';
+                }
+                return;
+            }
+            
+            // Handle TikTok cookies from cached login
+            if (event.data && event.data.type === 'tiktok-cookies') {
+                log('TikTok cookies received from cached login!', 'success');
+                log('Saving credentials...', 'info');
+                
+                // Stop polling if we got cookies
+                if (authPollInterval) {
+                    clearInterval(authPollInterval);
+                    authPollInterval = null;
+                }
+                
+                // Update UI
+                const statusEl = document.querySelector('.auto-status');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="success-text">TikTok logged in! Redirecting to Streamlabs...</span>';
+                }
+                
+                // Save credentials
+                const saveResult = await invoke('save_credentials_to_file');
+                if (saveResult && saveResult.success) {
+                    log('TikTok credentials saved!', 'success');
+                }
+                return;
+            }
+        });
+        log('Auth listener set up via postMessage', 'success');
     }
-
-    // Emit Tauri events
-    function emit(event, payload) {
-        if (!isTauri) return;
-        window.__TAURI__.event.emit(event, payload);
-    }
-
+    
     // TikTok Login Button Handler
     loginBtn.addEventListener('click', async () => {
         log('Opening TikTok login window...', 'info');
@@ -69,6 +194,18 @@
             if (result && result.success) {
                 log('TikTok login window opened!', 'success');
                 log('Please complete the login process in the new window.', 'info');
+                
+                // Inject the interceptor script into the login window
+                setTimeout(async () => {
+                    try {
+                        const injectResult = await invoke('inject_interceptor_to_login_window');
+                        if (injectResult && injectResult.success) {
+                            log('Cookie interceptor injected into login window', 'info');
+                        }
+                    } catch (e) {
+                        log('Failed to inject interceptor: ' + e.message, 'error');
+                    }
+                }, 2000);
                 
                 // Show instructions
                 showLoginInstructions();
@@ -81,43 +218,160 @@
     });
 
     function showLoginInstructions() {
+        // Remove existing instructions if any
+        const existing = document.querySelector('.login-instructions');
+        if (existing) existing.remove();
+        
         const instructions = document.createElement('div');
         instructions.className = 'login-instructions';
         instructions.innerHTML = `
             <p><strong>Login Instructions:</strong></p>
             <ol>
                 <li>Enter your TikTok credentials in the login window</li>
-                <li>Complete any required verification</li>
-                <li>Once logged in, your session will be captured automatically</li>
-                <li>Click "I'm logged in" button below when complete</li>
+                <li>Complete any required verification (SMS/Email if needed)</li>
+                <li>Once logged in, you will be automatically redirected to Streamlabs</li>
+                <li>Authorize the app when prompted</li>
+                <li>Credentials will be saved automatically</li>
             </ol>
-            <button id="confirm-login-btn" class="primary-btn">I'm logged in</button>
-            <button id="capture-creds-btn" class="secondary-btn">Capture Now</button>
-            <button id="close-login-btn" class="danger-btn">Close Login Window</button>
+            <p class="auto-status">Authenticating... Please wait.</p>
+            <div id="auth-progress" class="progress-bar">
+                <div class="progress-fill" style="width: 0%"></div>
+            </div>
         `;
         loginSection.appendChild(instructions);
         loginBtn.style.display = 'none';
-
-        // Handle "I'm logged in" button
-        document.getElementById('confirm-login-btn').addEventListener('click', async () => {
-            log('Processing login confirmation...', 'info');
-            await checkLoginStatus();
-        });
-
-        // Handle "Capture Now" button
-        document.getElementById('capture-creds-btn').addEventListener('click', async () => {
-            log('Capturing credentials...', 'info');
-            const creds = await invoke('get_captured_credentials');
-            log('Credentials captured: ' + JSON.stringify(creds, null, 2));
-        });
-
-        // Handle "Close Login Window" button
-        document.getElementById('close-login-btn').addEventListener('click', async () => {
-            await invoke('close_login_window');
-            log('Login window closed.', 'info');
-            instructions.remove();
-            loginBtn.style.display = 'inline-flex';
-        });
+        
+        // Start automatic polling for credentials
+        startAutoAuth();
+    }
+    
+    let authPollInterval = null;
+    
+    function startAutoAuth() {
+        let attempts = 0;
+        const maxAttempts = 120; // 2 minutes max
+        
+        if (authPollInterval) {
+            clearInterval(authPollInterval);
+        }
+        
+        authPollInterval = setInterval(async () => {
+            attempts++;
+            
+            // Update progress bar
+            const progress = Math.min((attempts / maxAttempts) * 100, 100);
+            const progressFill = document.querySelector('.progress-fill');
+            if (progressFill) {
+                progressFill.style.width = progress + '%';
+            }
+            
+            try {
+                const creds = await invoke('get_captured_credentials');
+                
+                if (creds && creds.success && creds.data && creds.data.cookies && Object.keys(creds.data.cookies).length > 0) {
+                    log('TikTok login detected! Saving credentials...', 'success');
+                    
+                    // Stop polling
+                    if (authPollInterval) {
+                        clearInterval(authPollInterval);
+                        authPollInterval = null;
+                    }
+                    
+                    // Save credentials automatically
+                    const saveResult = await invoke('save_credentials_to_file');
+                    if (saveResult && saveResult.success) {
+                        log('TikTok credentials saved! Redirecting to Streamlabs...', 'success');
+                        
+                        // Update UI
+                        const statusEl = document.querySelector('.auto-status');
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span class="success-text">TikTok logged in! Waiting for Streamlabs...</span>';
+                        }
+                    }
+                    
+                    return; // Wait for redirect
+                }
+                
+                // Check if we have auth code (Streamlabs redirect)
+                if (creds && creds.success && creds.data && creds.data.auth_code) {
+                    log('Streamlabs authorization code received! Completing authentication...', 'success');
+                    
+                    // Stop polling
+                    if (authPollInterval) {
+                        clearInterval(authPollInterval);
+                        authPollInterval = null;
+                    }
+                    
+                    // Update UI
+                    const statusEl = document.querySelector('.auto-status');
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="success-text">Exchanging code for token...</span>';
+                    }
+                    
+                    // Complete the authentication (exchange code for token)
+                    const completeResult = await invoke('complete_authentication');
+                    
+                    if (completeResult && completeResult.success) {
+                        log('Authentication complete! Token received.', 'success');
+                        
+                        // Update UI
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span class="success-text">All done! You can now start streaming.</span>';
+                        }
+                        
+                        // Close login window and update UI
+                        await invoke('close_login_window');
+                        
+                        // Remove instructions
+                        const instructions = document.querySelector('.login-instructions');
+                        if (instructions) {
+                            instructions.remove();
+                        }
+                        
+                        // Update main UI
+                        updateUI(true);
+                    } else {
+                        log('Authentication completion failed: ' + (completeResult?.message || 'Unknown error'), 'error');
+                        
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span class="error-text">Authentication failed. Please try again.</span>';
+                        }
+                        
+                        // Show login button again
+                        loginBtn.style.display = 'inline-flex';
+                    }
+                    
+                    return;
+                }
+                
+            } catch (e) {
+                log('Auth poll error: ' + e.message, 'error');
+            }
+            
+            // Timeout
+            if (attempts >= maxAttempts) {
+                log('Authentication timeout. Please try again.', 'error');
+                if (authPollInterval) {
+                    clearInterval(authPollInterval);
+                    authPollInterval = null;
+                }
+                
+                const statusEl = document.querySelector('.auto-status');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="error-text">Authentication timed out. Please try again.</span>';
+                }
+                
+                // Close login window
+                await invoke('close_login_window');
+                
+                // Show login button again
+                loginBtn.style.display = 'inline-flex';
+                const instructions = document.querySelector('.login-instructions');
+                if (instructions) {
+                    instructions.remove();
+                }
+            }
+        }, 1000); // Check every second
     }
 
     async function checkLoginStatus() {
@@ -127,6 +381,14 @@
             
             if (creds && creds.success && creds.data && creds.data.cookies && Object.keys(creds.data.cookies).length > 0) {
                 log('Login successful! Session cookies captured.', 'success');
+                log('Number of cookies: ' + Object.keys(creds.data.cookies).length);
+                
+                // Save credentials automatically
+                const saveResult = await invoke('save_credentials_to_file');
+                if (saveResult && saveResult.success) {
+                    log('Credentials saved to: ' + saveResult.path, 'success');
+                }
+                
                 updateUI(true);
                 
                 // Close the login window
@@ -140,6 +402,7 @@
                 loginBtn.style.display = 'none';
             } else {
                 log('No credentials captured yet. Please complete login first.', 'warning');
+                log('Tip: Make sure you are logged in on TikTok before checking status.');
             }
         } catch (e) {
             log('Error checking login status: ' + e.message, 'error');
