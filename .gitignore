@@ -37,3 +37,4 @@ cookies.json
 tokens.json
 discovery_*.json
 src-tauri/target/
+src-tauri/**data.json

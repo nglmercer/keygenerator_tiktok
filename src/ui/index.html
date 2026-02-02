@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'">
+    <title>TikTok Stream Key Generator</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body class="dark-mode">
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span class="tiktok-color">TikTok</span> Stream Key
+            </div>
+            <div class="header-right">
+                <div id="user-info" class="user-info hidden">
+                    <img id="user-avatar" src="" alt="Avatar">
+                    <span id="user-name">Username</span>
+                </div>
+                <div id="auth-status" class="status-badge unauthorized">Not Authenticated</div>
+            </div>
+        </header>
+
+        <main>
+            <section id="login-section" class="card">
+                <h2>Authentication</h2>
+                <p>Login to TikTok and Streamlabs to get started.</p>
+                <button id="login-btn" class="primary-btn">Login to TikTok</button>
+            </section>
+
+            <section id="stream-section" class="card hidden">
+                <h2>Stream Settings</h2>
+                <div class="form-group">
+                    <label for="stream-title">Stream Title</label>
+                    <input type="text" id="stream-title" placeholder="Enter stream title..." value="TikTok Live Stream">
+                </div>
+
+                <div class="form-group">
+                    <label for="game-search">Category / Game</label>
+                    <div class="search-container">
+                        <input type="text" id="game-search" placeholder="Search for a game...">
+                        <div id="search-results" class="search-results hidden"></div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Popular Categories</label>
+                    <div id="quick-categories" class="quick-categories">
+                        <span class="loading-text">Loading...</span>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="start-btn" class="success-btn">Start Stream</button>
+                    <button id="stop-btn" class="danger-btn hidden">Stop Stream</button>
+                </div>
+            </section>
+
+            <section id="result-section" class="card hidden">
+                <h2>Stream Credentials</h2>
+                <div class="credential-group">
+                    <label>RTMP URL</label>
+                    <div class="input-copy-group">
+                        <input type="text" id="rtmp-url" readonly>
+                        <button class="copy-btn" data-target="rtmp-url">Copy</button>
+                    </div>
+                </div>
+                <div class="credential-group">
+                    <label>Stream Key</label>
+                    <div class="input-copy-group">
+                        <input type="password" id="stream-key" readonly>
+                        <button class="copy-btn" data-target="stream-key">Copy</button>
+                        <button class="toggle-btn" data-target="stream-key">Show</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <div id="log-console" class="log-console">
+                <div class="log-entry">System ready.</div>
+            </div>
+        </footer>
+    </div>
+    <script src="renderer.js"></script>
+</body>
+
+</html>

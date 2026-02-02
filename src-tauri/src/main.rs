@@ -9,8 +9,6 @@ mod auth;
 mod config;
 mod api;
 mod data_capture;
-mod test_utils;
-mod integration_tests;
 
 // Re-export data capture types for easier use
 pub use data_capture::CaptureState;
@@ -1208,23 +1206,6 @@ async fn stream_end() -> Result<bool, String> {
     Ok(true)
 }
 
-// ===== TEST COMMANDS =====
-
-/// Run unit tests for the data capture module
-#[tauri::command]
-async fn run_data_capture_tests() -> Result<serde_json::Value, String> {
-    println!("[Test] Running data capture unit tests...");
-    
-    // Run integration tests
-    integration_tests::run_integration_tests();
-    
-    Ok(serde_json::json!({
-        "success": true,
-        "message": "Data capture tests completed",
-        "test_type": "unit_and_integration"
-    }))
-}
-
 /// Get the JavaScript capture script for webview injection
 #[tauri::command]
 fn get_capture_script() -> Result<serde_json::Value, String> {
@@ -1233,17 +1214,6 @@ fn get_capture_script() -> Result<serde_json::Value, String> {
         "success": true,
         "script": script,
         "type": "capture"
-    }))
-}
-
-/// Get the JavaScript test script for webview testing
-#[tauri::command]
-fn get_test_script() -> Result<serde_json::Value, String> {
-    let script = data_capture::generate_test_script();
-    Ok(serde_json::json!({
-        "success": true,
-        "script": script,
-        "type": "test"
     }))
 }
 
@@ -1308,9 +1278,7 @@ fn main() {
             stream_start,
             stream_end,
             // Test commands
-            run_data_capture_tests,
             get_capture_script,
-            get_test_script,
             validate_captured_data
         ])
         .run(context)
