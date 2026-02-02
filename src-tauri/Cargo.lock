@@ -1702,7 +1702,9 @@ dependencies = [
  "sha2",
  "tauri",
  "tauri-build",
+ "thiserror 2.0.18",
  "tokio",
+ "url",
  "uuid",
  "webbrowser",
 ]

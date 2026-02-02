@@ -20,6 +20,9 @@ reqwest = { version = "0.11", features = ["json", "multipart", "blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Error handling
+thiserror = "2"
+
 # Cryptography
 sha2 = "0.10"
 base64 = "0.22"
@@ -42,6 +45,9 @@ uuid = { version = "1", features = ["v4"] }
 
 # Mutex with Send guard
 parking_lot = "0.12"
+
+# URL parsing
+url = "2.5"
 
 # Tauri 2.x dependencies
 [dependencies.tauri]
