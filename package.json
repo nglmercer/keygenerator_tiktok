@@ -1,15 +1,13 @@
 {
   "name": "keygenerator",
-  "module": "index.ts",
-  "main": "dist/main.js",
+  "version": "0.1.0",
+  "description": "TikTok Stream Key Generator - Tauri migration",
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "bun run typecheck && bun run build:code",
-    "build:code": "bun build src/index.ts --outfile dist/main.js --target node --external electron",
-    "typecheck": "bunx tsc --noEmit",
-    "discover": "bun scripts/discover.ts",
-    "start": "bun run build && electron ."
+    "tauri": "bunx tauri",
+    "dev": "bunx tauri dev",
+    "build": "bunx tauri build"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -20,7 +18,6 @@
   "dependencies": {
     "axios": "^1.13.2",
     "commander": "^14.0.2",
-    "electron": "^39.2.7",
     "playwright": "^1.57.0",
     "ts-node": "^10.9.2"
   }

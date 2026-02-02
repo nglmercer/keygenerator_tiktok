@@ -4,8 +4,9 @@
     if (window.__rendererInitialized) return;
     window.__rendererInitialized = true;
 
-    const electronAPI = window.electronAPI;
-
+    // Check for Tauri API
+    const isTauri = window.__TAURI__ !== undefined;
+    
     const authStatus = document.getElementById('auth-status');
     const loginBtn = document.getElementById('login-btn');
     const loginSection = document.getElementById('login-section');
@@ -30,18 +31,120 @@
         entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
         logConsole.appendChild(entry);
         logConsole.scrollTop = logConsole.scrollHeight;
+        console.log(`[Renderer] ${msg}`);
     }
 
+    // Helper function to invoke Tauri commands
+    async function invoke(command, args = {}) {
+        if (!isTauri) {
+            console.warn('Tauri API not available');
+            return null;
+        }
+        try {
+            return await window.__TAURI__.core.invoke(command, args);
+        } catch (e) {
+            console.error(`Error invoking ${command}:`, e);
+            throw e;
+        }
+    }
+
+    // Listen for Tauri events
+    function listen(event, callback) {
+        if (!isTauri) return { unsubscribe: () => {} };
+        return window.__TAURI__.event.listen(event, callback);
+    }
+
+    // Emit Tauri events
+    function emit(event, payload) {
+        if (!isTauri) return;
+        window.__TAURI__.event.emit(event, payload);
+    }
+
+    // TikTok Login Button Handler
     loginBtn.addEventListener('click', async () => {
-        log('Starting login flow...', 'info');
-        const result = await electronAPI.invoke('auth:login');
-        if (result.success) {
-            log('Login successful!', 'success');
-            updateUI(true);
-        } else {
-            log('Login failed: ' + result.error, 'error');
+        log('Opening TikTok login window...', 'info');
+        
+        try {
+            const result = await invoke('open_tiktok_login_window');
+            if (result && result.success) {
+                log('TikTok login window opened!', 'success');
+                log('Please complete the login process in the new window.', 'info');
+                
+                // Show instructions
+                showLoginInstructions();
+            } else {
+                log('Failed to open login window: ' + (result?.message || 'Unknown error'), 'error');
+            }
+        } catch (e) {
+            log('Login error: ' + e.message, 'error');
         }
     });
+
+    function showLoginInstructions() {
+        const instructions = document.createElement('div');
+        instructions.className = 'login-instructions';
+        instructions.innerHTML = `
+            <p><strong>Login Instructions:</strong></p>
+            <ol>
+                <li>Enter your TikTok credentials in the login window</li>
+                <li>Complete any required verification</li>
+                <li>Once logged in, your session will be captured automatically</li>
+                <li>Click "I'm logged in" button below when complete</li>
+            </ol>
+            <button id="confirm-login-btn" class="primary-btn">I'm logged in</button>
+            <button id="capture-creds-btn" class="secondary-btn">Capture Now</button>
+            <button id="close-login-btn" class="danger-btn">Close Login Window</button>
+        `;
+        loginSection.appendChild(instructions);
+        loginBtn.style.display = 'none';
+
+        // Handle "I'm logged in" button
+        document.getElementById('confirm-login-btn').addEventListener('click', async () => {
+            log('Processing login confirmation...', 'info');
+            await checkLoginStatus();
+        });
+
+        // Handle "Capture Now" button
+        document.getElementById('capture-creds-btn').addEventListener('click', async () => {
+            log('Capturing credentials...', 'info');
+            const creds = await invoke('get_captured_credentials');
+            log('Credentials captured: ' + JSON.stringify(creds, null, 2));
+        });
+
+        // Handle "Close Login Window" button
+        document.getElementById('close-login-btn').addEventListener('click', async () => {
+            await invoke('close_login_window');
+            log('Login window closed.', 'info');
+            instructions.remove();
+            loginBtn.style.display = 'inline-flex';
+        });
+    }
+
+    async function checkLoginStatus() {
+        try {
+            const creds = await invoke('get_captured_credentials');
+            log('Captured credentials: ' + JSON.stringify(creds, null, 2));
+            
+            if (creds && creds.success && creds.data && creds.data.cookies && Object.keys(creds.data.cookies).length > 0) {
+                log('Login successful! Session cookies captured.', 'success');
+                updateUI(true);
+                
+                // Close the login window
+                await invoke('close_login_window');
+                
+                // Remove instructions
+                const instructions = document.querySelector('.login-instructions');
+                if (instructions) {
+                    instructions.remove();
+                }
+                loginBtn.style.display = 'none';
+            } else {
+                log('No credentials captured yet. Please complete login first.', 'warning');
+            }
+        } catch (e) {
+            log('Error checking login status: ' + e.message, 'error');
+        }
+    }
 
     async function updateUI(isAuthorized) {
         if (isAuthorized) {
@@ -49,14 +152,6 @@
             authStatus.className = 'status-badge authorized';
             loginSection.classList.add('hidden');
             streamSection.classList.remove('hidden');
-
-            // Fetch and show user info
-            const profile = await electronAPI.invoke('user:profile');
-            if (profile) {
-                document.getElementById('user-info').classList.remove('hidden');
-                document.getElementById('user-avatar').src = profile.avatar_thumb || profile.avatar_url || 'https://www.tiktok.com/favicon.ico';
-                document.getElementById('user-name').innerText = profile.display_name || profile.username || 'User';
-            }
 
             // Fetch and show categories
             fetchInitialCategories();
@@ -67,6 +162,7 @@
             streamSection.classList.add('hidden');
             resultSection.classList.add('hidden');
             document.getElementById('user-info').classList.add('hidden');
+            loginBtn.style.display = 'inline-flex';
         }
     }
 
@@ -74,8 +170,7 @@
         if (!quickCats) return;
         quickCats.innerHTML = '<span class="loading-text">Loading...</span>';
         try {
-            // We use 'stream:search' with empty string which now triggers getInitialCategories in API
-            const categories = await electronAPI.invoke('stream:search', '');
+            const categories = await invoke('stream_search', { query: '' });
             if (categories && categories.length > 0) {
                 renderCategoryPills(categories);
             } else {
@@ -110,7 +205,7 @@
         clearTimeout(searchTimeout);
         const query = gameSearch.value.trim();
         if (query.length === 0) {
-            fetchInitialCategories(); // Show defaults again if cleared
+            fetchInitialCategories();
             searchResults.classList.add('hidden');
             return;
         }
@@ -124,7 +219,7 @@
             searchResults.classList.remove('hidden');
 
             log(`Searching categories for: "${query}"...`);
-            const results = await electronAPI.invoke('stream:search', query);
+            const results = await invoke('stream_search', { query });
             displaySearchResults(results, query);
         }, 500);
     });
@@ -177,7 +272,7 @@
         log('Starting stream...', 'info');
         startBtn.disabled = true;
 
-        const result = await electronAPI.invoke('stream:start', { title, category });
+        const result = await invoke('stream_start', { title, category });
 
         if (result && result.rtmpUrl) {
             log('Stream started successfully!', 'success');
@@ -194,7 +289,7 @@
 
     stopBtn.addEventListener('click', async () => {
         log('Stopping stream...', 'info');
-        const success = await electronAPI.invoke('stream:end');
+        const success = await invoke('stream_end');
         if (success) {
             log('Stream stopped.', 'success');
             startBtn.classList.remove('hidden');
@@ -234,13 +329,22 @@
 
     // Check initial status
     (async () => {
+        log('Initializing... (Tauri: ' + isTauri + ')');
+        if (!isTauri) {
+            log('Running in browser mode - Tauri APIs not available', 'warning');
+            return;
+        }
+        
         try {
-            const info = await electronAPI.invoke('stream:info');
-            if (info) {
+            const info = await invoke('check_credentials');
+            if (info && info.ready) {
                 log('Session restored.', 'success');
                 updateUI(true);
+            } else {
+                updateUI(false);
             }
         } catch (e) {
+            log('Initial check: ' + e.message);
             updateUI(false);
         }
     })();

@@ -203,6 +203,36 @@ input:focus {
     transform: translateY(-2px);
 }
 
+.login-instructions {
+    margin-top: 20px;
+    padding: 20px;
+    background: var(--bg-color);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.login-instructions p {
+    margin-bottom: 12px;
+    color: var(--text-primary);
+}
+
+.login-instructions ol {
+    margin-left: 20px;
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+}
+
+.login-instructions li {
+    margin-bottom: 8px;
+}
+
+.login-instructions .primary-btn,
+.login-instructions .secondary-btn,
+.login-instructions .danger-btn {
+    margin-right: 10px;
+    margin-top: 10px;
+}
+
 .success-btn {
     background: var(--success);
     color: white;
@@ -220,6 +250,17 @@ input:focus {
 
 .danger-btn:hover {
     background: #dc2626;
+    transform: translateY(-2px);
+}
+
+.secondary-btn {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
+.secondary-btn:hover {
+    background: var(--text-secondary);
+    color: var(--bg-color);
     transform: translateY(-2px);
 }
 
