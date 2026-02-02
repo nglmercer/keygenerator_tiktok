@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import crypto from 'node:crypto';
+import type { EventLoop } from 'webview-napi';
 import { StreamlabsAuth } from './electron-login.ts';
 
 export interface AuthData {
@@ -41,12 +42,12 @@ export class AuthManager {
         return `https://streamlabs.com/m/login?force_verify=1&external=mobile&skip_splash=1&tiktok&code_challenge=${this.codeChallenge}`;
     }
 
-    async retrieveToken(): Promise<string> {
-        const authData = await this.retrieveAuthData();
+    async retrieveToken(eventLoop: EventLoop): Promise<string> {
+        const authData = await this.retrieveAuthData(eventLoop);
         return authData.oauth_token;
     }
 
-    async retrieveAuthData(): Promise<AuthData> {
+    async retrieveAuthData(eventLoop: EventLoop): Promise<AuthData> {
         const tokenPath = path.resolve(process.cwd(), 'tokens.json');
 
         // Try to load existing token
@@ -67,7 +68,7 @@ export class AuthManager {
 
         console.log('[AuthManager] Starting authentication via internal webview window...');
 
-        const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier);
+        const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier, eventLoop);
         const authData = await auth.findToken();
 
         // Save all data for later discovery scripts
@@ -76,5 +77,4 @@ export class AuthManager {
 
         return authData;
     }
-
 }

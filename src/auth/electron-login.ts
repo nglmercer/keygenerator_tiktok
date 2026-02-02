@@ -1,4 +1,4 @@
-import { Application, type Webview, type BrowserWindow } from "webview-napi";
+import { WindowBuilder, WebViewBuilder, EventLoop, type WebView, type Window } from "webview-napi";
 import fs from 'fs';
 import path from 'path';
 import { IpcMessageRouter } from "../utils/ipc-handler.js";
@@ -20,9 +20,8 @@ interface TikTokData {
 }
 
 export class StreamlabsAuth {
-    private window: BrowserWindow | null = null;
-    private webview: Webview | null = null;
-    private app: Application | null = null;
+    private window: Window | null = null;
+    private webview: WebView | null = null;
     private authUrl: string;
     private cookiesPath: string;
     private codeVerifier: string;
@@ -31,11 +30,13 @@ export class StreamlabsAuth {
     private rejectToken: ((reason: any) => void) | null = null;
     private ipcRouter: IpcMessageRouter;
     private tiktokData: TikTokData = {};
+    private eventLoop: EventLoop;
 
-    constructor(authUrl: string, cookiesPath: string, codeVerifier: string) {
+    constructor(authUrl: string, cookiesPath: string, codeVerifier: string, eventLoop: EventLoop) {
         this.authUrl = authUrl;
         this.cookiesPath = cookiesPath;
         this.codeVerifier = codeVerifier;
+        this.eventLoop = eventLoop;
         
         // Setup IPC router for handling messages from webview
         this.ipcRouter = new IpcMessageRouter({
@@ -51,6 +52,13 @@ export class StreamlabsAuth {
         });
 
         this.setupIPCHandlers();
+    }
+
+    /**
+     * Get the window instance (for external access)
+     */
+    public getWindow(): Window | null {
+        return this.window;
     }
 
     private setupIPCHandlers() {
@@ -110,26 +118,29 @@ export class StreamlabsAuth {
     private async createWindow() {
         console.log('[Webview-Login] Iniciando ventana de autenticación...');
 
-        this.app = new Application();
-        this.window = this.app.createBrowserWindow({
-            title: 'TikTok Auth - Streamlabs',
-            width: 1280,
-            height: 800,
-        });
+        // Use the shared EventLoop instead of creating a new Application
+        this.window = new WindowBuilder()
+            .build(this.eventLoop);
 
         // Create injection script for WebSocket interception and IPC
         const injectionScript = this.createInjectionScript();
 
-        this.webview = this.window.createWebview({
-            preload: injectionScript,
-            url: "https://www.tiktok.com/login",
-            enableDevtools: true,
-        });
+        this.webview = new WebViewBuilder()
+            .withUrl("https://www.tiktok.com/login")
+            .withDevtools(true)
+            .buildOnWindow(this.window!, 'auth-webview');
+
+        // Inject the script after the webview is created
+        this.webview.evaluateScript(injectionScript);
 
         this.webview.openDevtools();
 
         // Setup IPC message handling
-        this.webview.onIpcMessage((_e, message) => {
+        this.webview.on((error, message) => {
+            if (error) {
+                console.error('[Webview-Login] IPC Error:', error);
+                return;
+            }
             const payload = message.toString();
             this.ipcRouter.handle(payload);
         });
@@ -139,9 +150,6 @@ export class StreamlabsAuth {
 
         // Load cookies if they exist
         await this.loadCookies();
-
-        // Start the app event loop
-        this.startEventLoop();
     }
 
     private createInjectionScript(): string {
@@ -251,25 +259,10 @@ export class StreamlabsAuth {
         });
     }
 
-    private startEventLoop() {
-        const poll = () => {
-            if (this.app && this.app.runIteration()) {
-                setTimeout(poll, 10);
-            } else {
-                if (!this.tokenFetchStarted) {
-                    this.rejectToken?.(new Error('Window closed by user'));
-                }
-            }
-        };
-        poll();
-    }
-
     private async loadCookies() {
         if (fs.existsSync(this.cookiesPath)) {
             try {
                 const cookies = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
-                // Note: webview-napi may have different cookie handling
-                // For now, we just log that cookies exist
                 console.log('[Webview-Login] Cookies file found:', cookies.length, 'cookies');
                 
                 // Inject cookies via JavaScript if needed
@@ -424,14 +417,9 @@ export class StreamlabsAuth {
 
     private async cleanup() {
         await this.saveCookies();
-        if (this.window) {
-            // Close window - in webview-napi we just stop the app
-            this.window = null;
-        }
-        if (this.app) {
-            // The app will stop when runIteration returns false
-            this.app = null;
-        }
+        // Window will be cleaned up when the auth flow completes
+        this.window = null;
+        this.webview = null;
     }
 
     /**

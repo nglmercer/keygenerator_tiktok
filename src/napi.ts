@@ -160,12 +160,19 @@ async function startWebview() {
 
 /**
  * Perform login and get authentication token
+ * Note: This function requires an EventLoop to be passed in for the auth webview
  */
-export async function login(): Promise<{ success: boolean; token?: string; error?: string }> {
+export async function login(eventLoop?: any): Promise<{ success: boolean; token?: string; error?: string }> {
   try {
     console.log("[NAPI] Iniciando proceso de login...");
     const authManager = new AuthManager();
-    const token = await authManager.retrieveToken();
+    
+    // If no eventLoop is provided, we can't open the auth window
+    if (!eventLoop) {
+      return { success: false, error: "EventLoop is required for authentication" };
+    }
+    
+    const token = await authManager.retrieveToken(eventLoop);
     
     if (token) {
       // Initialize StreamAPI with the token
