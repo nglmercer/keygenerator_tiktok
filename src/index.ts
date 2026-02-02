@@ -3,8 +3,93 @@ import { serve, file } from 'bun';
 import { WindowBuilder, WebViewBuilder, EventLoop, WebView } from 'webview-napi';
 import { StreamAPI } from './api/StreamAPI.ts';
 import { AuthManager } from './auth/AuthManager.ts';
-
+//import html from './ui/index.html' with { type: "text" };
+//const filepath = path.join(process.cwd(),'/src/ui/')
 // Bun server to serve the HTML UI
+const preloadScript = `
+(function() {
+    'use strict';
+    
+    // Request ID generator
+    let requestIdCounter = 0;
+    const pendingRequests = new Map();
+    
+    // Set up IPC communication
+    window.electronAPI = {
+        invoke: async (channel, ...args) => {
+            return new Promise((resolve, reject) => {
+                const requestId = 'req_' + (++requestIdCounter) + '_' + Date.now();
+                pendingRequests.set(requestId, { resolve, reject });
+                
+                // Send message to main process
+                if (window.__webview_on_message__) {
+                    window.__webview_on_message__(JSON.stringify({ channel, requestId, args }));
+                } else if (window.ipc && window.ipc.postMessage) {
+                    window.ipc.postMessage(JSON.stringify({ channel, requestId, args }));
+                }
+                
+                // Timeout after 30 seconds
+                setTimeout(() => {
+                    if (pendingRequests.has(requestId)) {
+                        pendingRequests.delete(requestId);
+                        reject(new Error('IPC request timeout'));
+                    }
+                }, 30000);
+            });
+        },
+        
+        on: (channel, callback) => {
+            // Store callback for the channel
+            if (!window.__ipcListeners) {
+                window.__ipcListeners = {};
+            }
+            if (!window.__ipcListeners[channel]) {
+                window.__ipcListeners[channel] = [];
+            }
+            window.__ipcListeners[channel].push(callback);
+        },
+        
+        send: (channel, ...args) => {
+            // Fire and forget message
+            if (window.__webview_on_message__) {
+                window.__webview_on_message__(JSON.stringify({ channel, args, noResponse: true }));
+            } else if (window.ipc && window.ipc.postMessage) {
+                window.ipc.postMessage(JSON.stringify({ channel, args, noResponse: true }));
+            }
+        }
+    };
+    
+    // Handle incoming messages from main process
+    window.__on_webview_message__ = function(message) {
+        try {
+            const data = JSON.parse(message);
+            const { requestId, success, data: responseData, error } = data;
+            
+            // Handle pending request responses
+            if (requestId && pendingRequests.has(requestId)) {
+                const { resolve, reject } = pendingRequests.get(requestId);
+                pendingRequests.delete(requestId);
+                
+                if (error) {
+                    reject(new Error(error));
+                } else {
+                    resolve(responseData);
+                }
+                return;
+            }
+            
+            // Handle broadcast messages
+            if (data.channel && window.__ipcListeners && window.__ipcListeners[data.channel]) {
+                window.__ipcListeners[data.channel].forEach(cb => cb(...(data.args || [])));
+            }
+        } catch (e) {
+            console.error('[Preload] Error handling message:', e);
+        }
+    };
+    
+    console.log('[Preload] electronAPI initialized');
+})();
+`;
 const server = serve({
     port: 3000,
     async fetch(req) {
@@ -58,6 +143,7 @@ const window = new WindowBuilder().build(eventloop);
 const webview = new WebViewBuilder()
     .withUrl(baseurl)
     .withDevtools(true)
+    .withInitializationScript({js:preloadScript,once:false})
     .buildOnWindow(window, 'tiktok_keygen');
 
 // IPC Handler Registry
@@ -182,95 +268,12 @@ ipcMain.setWebview(webview);
 setupIPC();
 
 // Inject preload script to set up window.electronAPI
-const preloadScript = `
-(function() {
-    'use strict';
-    
-    // Request ID generator
-    let requestIdCounter = 0;
-    const pendingRequests = new Map();
-    
-    // Set up IPC communication
-    window.electronAPI = {
-        invoke: async (channel, ...args) => {
-            return new Promise((resolve, reject) => {
-                const requestId = 'req_' + (++requestIdCounter) + '_' + Date.now();
-                pendingRequests.set(requestId, { resolve, reject });
-                
-                // Send message to main process
-                if (window.__webview_on_message__) {
-                    window.__webview_on_message__(JSON.stringify({ channel, requestId, args }));
-                } else if (window.ipc && window.ipc.postMessage) {
-                    window.ipc.postMessage(JSON.stringify({ channel, requestId, args }));
-                }
-                
-                // Timeout after 30 seconds
-                setTimeout(() => {
-                    if (pendingRequests.has(requestId)) {
-                        pendingRequests.delete(requestId);
-                        reject(new Error('IPC request timeout'));
-                    }
-                }, 30000);
-            });
-        },
-        
-        on: (channel, callback) => {
-            // Store callback for the channel
-            if (!window.__ipcListeners) {
-                window.__ipcListeners = {};
-            }
-            if (!window.__ipcListeners[channel]) {
-                window.__ipcListeners[channel] = [];
-            }
-            window.__ipcListeners[channel].push(callback);
-        },
-        
-        send: (channel, ...args) => {
-            // Fire and forget message
-            if (window.__webview_on_message__) {
-                window.__webview_on_message__(JSON.stringify({ channel, args, noResponse: true }));
-            } else if (window.ipc && window.ipc.postMessage) {
-                window.ipc.postMessage(JSON.stringify({ channel, args, noResponse: true }));
-            }
-        }
-    };
-    
-    // Handle incoming messages from main process
-    window.__on_webview_message__ = function(message) {
-        try {
-            const data = JSON.parse(message);
-            const { requestId, success, data: responseData, error } = data;
-            
-            // Handle pending request responses
-            if (requestId && pendingRequests.has(requestId)) {
-                const { resolve, reject } = pendingRequests.get(requestId);
-                pendingRequests.delete(requestId);
-                
-                if (error) {
-                    reject(new Error(error));
-                } else {
-                    resolve(responseData);
-                }
-                return;
-            }
-            
-            // Handle broadcast messages
-            if (data.channel && window.__ipcListeners && window.__ipcListeners[data.channel]) {
-                window.__ipcListeners[data.channel].forEach(cb => cb(...(data.args || [])));
-            }
-        } catch (e) {
-            console.error('[Preload] Error handling message:', e);
-        }
-    };
-    
-    console.log('[Preload] electronAPI initialized');
-})();
-`;
+
 
 // Evaluate the preload script in the webview
 webview.evaluateScript(preloadScript);
 
-//webview.openDevtools();
+webview.openDevtools();
 setInterval(async function(){
    if ( eventloop.runIteration()){
        window.id;

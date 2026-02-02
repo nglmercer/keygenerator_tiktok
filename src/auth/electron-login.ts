@@ -320,7 +320,7 @@ export class StreamlabsAuth {
     private forceNavigateAuth() {
         console.log(`[Webview-Login] Navigating to Auth URL: ${this.authUrl}`);
         try {
-            this.webview?.evaluateScript(`window.location.href = "${this.authUrl}";`);
+            this.webview?.evaluateScript(`window.location.href = "${this.authUrl}";console.log("js")`);
         } catch (e: any) {
             console.error('[Webview-Login] Failed to navigate to Auth URL:', e);
         }
