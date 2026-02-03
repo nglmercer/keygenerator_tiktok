@@ -1,0 +1,29 @@
+{
+  "appId": "com.tiktok.keygenerator",
+  "productName": "TikTok Stream Key Generator",
+  "directories": {
+    "output": "dist-electron",
+    "buildResources": "dist"
+  },
+  "files": [
+    {
+      "from": "dist",
+      "to": ".",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "linux": {
+    "target": "AppImage",
+    "category": "Utility"
+  },
+  "mac": {
+    "target": "dmg",
+    "category": "public.app-category.utilities"
+  },
+  "win": {
+    "target": "nsis"
+  },
+  "npmRebuild": false
+}

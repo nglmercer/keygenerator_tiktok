@@ -73,8 +73,9 @@ bun run start
 
 | Script | Description |
 |--------|-------------|
-| `bun run build` | Build TypeScript and bundle Electron app |
-| `bun run build:code` | Bundle TypeScript code only |
+| `bun run build` | Build standalone executable for current platform |
+| `bun run build:mac` | Build for macOS (arm64) |
+| `bun run build:win` | Build for Windows (x64) |
 | `bun run typecheck` | Run TypeScript type checking |
 | `bun run start` | Build and start Electron app |
 | `bun run discover` | Run discovery script |
@@ -289,14 +290,48 @@ bun test -- tests/api.test.ts
 bun test -- tests/auth.test.ts
 ```
 
-## 📦 Building
+## 📦 Building and Packaging
+
+This is an Electron app, so building requires packaging with [electron-builder](https://electron.build/).
+
+### Development Build
 
 ```bash
-# Production build
-bun run build
+# Build bundled JS for development
+bun run build:bundle
 
-# Output: dist/main.js
+# Start in development mode
+bun run start
 ```
+
+### Production Build
+
+```bash
+# Build for current platform
+bun run build:dist
+
+# Build for specific platforms
+bun run build:dist:linux  # Linux AppImage
+bun run build:dist:mac    # macOS DMG
+bun run build:dist:win    # Windows NSIS
+```
+
+### Build Output
+
+| Command | Output |
+|---------|--------|
+| `build:bundle` | `./dist/index.js` (bundled JS for Electron) |
+| `build:dist` | `./dist-electron/` (installers for all platforms) |
+| `build:dist:linux` | `./dist-electron/TikTok-Stream-Key-Generator-x64.AppImage` |
+| `build:dist:mac` | `./dist-electron/TikTok-Stream-Key-Generator.dmg` |
+| `build:dist:win` | `./dist-electron/TikTok-Stream-Key-Generator.exe` |
+
+### Notes
+
+- This project uses **Bun** for development and TypeScript bundling
+- **Electron** is used for the desktop runtime
+- **electron-builder** creates distributable packages
+- The bundled JS excludes `electron` which is provided by the runtime
 
 ## 🤝 Contributing
 
