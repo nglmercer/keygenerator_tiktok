@@ -27,6 +27,7 @@
     "axios": "^1.13.2"
   },
   "build": {
+    "publish": "never",
     "appId": "com.keygenerator.tiktok",
     "productName": "TikTok KeyGenerator",
     "directories": {
