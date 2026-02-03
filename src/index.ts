@@ -1,7 +1,6 @@
 import { spawn } from 'child_process';
-import * as electron from 'electron';
+import { app } from 'electron';
 import path from 'path';
-const { app } = electron;
 
 // Self-relaunch in Electron if running in a non-electron environment (like Bun)
 if (!process.versions.electron) {

@@ -1,9 +1,35 @@
 import fs from 'fs';
 import path from 'path';
+import { app } from 'electron';
 
 export type JsonData = Record<string, unknown>;
 export type JsonArray = unknown[];
 export type JsonValue = JsonData | JsonArray | string | number | boolean | null;
+
+/**
+ * Get the application base path
+ * In development: returns the project root
+ * In production: returns the packaged app resources path
+ */
+export function getAppBasePath(): string {
+    // Check if we're in development mode
+    const isDev = !app.isPackaged;
+    
+    if (isDev) {
+        // In development, use the current working directory
+        return process.cwd();
+    } else {
+        // In production, use the resources path
+        return process.resourcesPath;
+    }
+}
+
+/**
+ * Resolve a path relative to the application base path
+ */
+export function resolveAppPath(...pathSegments: string[]): string {
+    return path.resolve(getAppBasePath(), ...pathSegments);
+}
 
 /**
  * File utilities to avoid repeated file operations

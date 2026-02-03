@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain, app } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import path from 'path';
+import { resolveAppPath } from './fileUtils';
 import { 
     WINDOW_CONFIG, 
     PATHS, 
@@ -97,7 +98,7 @@ export class AuthWindowManager extends WindowManager {
             title: WINDOW_CONFIG.AUTH.title,
             width: WINDOW_CONFIG.AUTH.width,
             height: WINDOW_CONFIG.AUTH.height,
-            preloadPath: path.join(process.resourcesPath, PATHS.PRELOAD_AUTH),
+            preloadPath: resolveAppPath(PATHS.PRELOAD_AUTH),
         });
         this.codeVerifier = codeVerifier;
     }
@@ -170,12 +171,12 @@ export class MainWindowManager extends WindowManager {
             width: WINDOW_CONFIG.MAIN.width,
             height: WINDOW_CONFIG.MAIN.height,
             backgroundColor: WINDOW_CONFIG.MAIN.backgroundColor,
-            preloadPath: path.join(process.resourcesPath, PATHS.PRELOAD),
+            preloadPath: resolveAppPath(PATHS.PRELOAD),
         });
     }
 
     load(): void {
-        const indexPath = path.join(process.resourcesPath, PATHS.INDEX_HTML);
+        const indexPath = resolveAppPath(PATHS.INDEX_HTML);
         if (require('fs').existsSync(indexPath)) {
             this.loadFile(indexPath);
         } else {
