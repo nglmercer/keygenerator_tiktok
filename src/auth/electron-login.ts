@@ -1,8 +1,16 @@
 import * as electron from 'electron';
 const { BrowserWindow, session, ipcMain } = electron;
-import type { IpcMainEvent } from 'electron';
-import fs from 'fs';
-import path from 'path';
+import type { IpcMainEvent, WebContents } from 'electron';
+import { 
+    IPC_CHANNELS, 
+    WINDOW_CONFIG, 
+    PATHS, 
+    API_ENDPOINTS, 
+    ERROR_MESSAGES, 
+    CONSOLE_MESSAGES,
+    USER_AGENT
+} from '../constants';
+import { FileUtils,getAppBasePath } from '../utils/fileUtils';
 
 interface AuthResult {
     success: boolean;
@@ -13,7 +21,7 @@ interface AuthResult {
 }
 
 export class StreamlabsAuth {
-    private window: electron.BrowserWindow | null = null;
+    private window: typeof BrowserWindow.prototype | null = null;
     private authUrl: string;
     private cookiesPath: string;
     private codeVerifier: string;
@@ -36,22 +44,20 @@ export class StreamlabsAuth {
     }
 
     private async createWindow() {
-        // In a bundled environment, __dirname might point to the bundle location
-        // We'll try to find preload.js in the same dir as the current script
-        const preloadPath = path.join(process.cwd(), 'src/auth/preload.js');
-        console.log(`[Electron-Login] Preload path: ${preloadPath}`);
+        const preloadPath = require('path').join(getAppBasePath(), PATHS.PRELOAD_AUTH);
+        console.log(CONSOLE_MESSAGES.ELECTRON_PRELOAD(preloadPath));
 
         this.window = new BrowserWindow({
-            width: 1280,
-            height: 800,
+            title: WINDOW_CONFIG.AUTH.title,
+            width: WINDOW_CONFIG.AUTH.width,
+            height: WINDOW_CONFIG.AUTH.height,
             show: true,
-            title: 'TikTok Auth - Streamlabs',
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
                 sandbox: false,
                 preload: preloadPath,
-            }
+            },
         });
 
         this.setupIPC();
@@ -59,8 +65,8 @@ export class StreamlabsAuth {
 
         await this.loadCookies();
 
-        console.log('[Electron-Login] Navigating to TikTok login...');
-        await this.window.loadURL('https://www.tiktok.com/login');
+        console.log(CONSOLE_MESSAGES.ELECTRON_NAVIGATE);
+        await this.window.loadURL(API_ENDPOINTS.TIKTOK_LOGIN);
 
         this.checkLoginStatus(this.window.webContents.getURL());
     }
@@ -68,8 +74,7 @@ export class StreamlabsAuth {
     private setupIPC() {
         const logHandler = (event: IpcMainEvent, message: string) => {
             if (event.sender !== this.window?.webContents) return;
-            console.log(`[Renderer]: ${message}`);
-            if (message === 'TRIGGER_STREAMLABS_AUTH') {
+            if (message === IPC_CHANNELS.TRIGGER_STREAMLABS_AUTH) {
                 this.forceNavigateAuth();
             }
         };
@@ -79,71 +84,62 @@ export class StreamlabsAuth {
             this.handleFetchResult(result);
         };
 
-        ipcMain.on('log-console', logHandler);
-        ipcMain.on('fetch-result', resultHandler);
+        ipcMain.on(IPC_CHANNELS.LOG_CONSOLE, logHandler);
+        ipcMain.on(IPC_CHANNELS.FETCH_RESULT, resultHandler);
 
-        // Cleanup handlers when window is closed
         this.window?.on('closed', () => {
-            ipcMain.removeListener('log-console', logHandler);
-            ipcMain.removeListener('fetch-result', resultHandler);
+            ipcMain.removeListener(IPC_CHANNELS.LOG_CONSOLE, logHandler);
+            ipcMain.removeListener(IPC_CHANNELS.FETCH_RESULT, resultHandler);
         });
     }
 
     private setupLifecycle() {
         if (!this.window) return;
 
-        this.window.webContents.on('did-navigate', (_: any, url: string) => {
+        const webContents = this.window.webContents as WebContents & { on: (event: string, callback: (...args: any[]) => void) => void };
+        webContents.on('did-navigate', (_: any, url: string) => {
             this.checkLoginStatus(url);
             this.checkSuccess(url);
         });
 
-        this.window.webContents.on('did-navigate-in-page', (_: any, url: string) => {
+        webContents.on('did-navigate-in-page', (_: any, url: string) => {
             this.checkSuccess(url);
         });
 
-        this.window.webContents.on('did-finish-load', () => {
+        webContents.on('did-finish-load', () => {
             this.injectManualAuthButton();
         });
 
         this.window.on('closed', () => {
             this.window = null;
             if (!this.tokenFetchStarted) {
-                this.rejectToken?.(new Error('Window closed by user'));
+                this.rejectToken?.(new Error(ERROR_MESSAGES.WINDOW_CLOSED));
             }
         });
     }
 
     private async loadCookies() {
-        if (fs.existsSync(this.cookiesPath)) {
-            try {
-                const cookies = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
-                const promises = cookies.map((cookie: any) => {
-                    const scheme = cookie.secure ? 'https' : 'http';
-                    const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
-                    const url = `${scheme}://${domain}${cookie.path}`;
-                    return session.defaultSession.cookies.set({ ...cookie, url });
-                });
-                await Promise.all(promises);
-                console.log('[Electron-Login] Cookies loaded.');
-            } catch (e) {
-                console.error('[Electron-Login] Failed to load cookies:', e);
-            }
+        if (FileUtils.exists(this.cookiesPath)) {
+            const cookies = FileUtils.readJsonArray(this.cookiesPath, []);
+            const promises = cookies.map((cookie: any) => {
+                const scheme = cookie.secure ? 'https' : 'http';
+                const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
+                const url = `${scheme}://${domain}${cookie.path}`;
+                return session.defaultSession.cookies.set({ ...cookie, url });
+            });
+            await Promise.all(promises);
+            console.log(CONSOLE_MESSAGES.ELECTRON_COOKIES_LOADED);
         }
     }
 
     private async saveCookies() {
-        try {
-            const cookies = await session.defaultSession.cookies.get({});
-            fs.writeFileSync(this.cookiesPath, JSON.stringify(cookies, null, 2));
-            console.log('[Electron-Login] Cookies saved.');
-        } catch (e) {
-            console.error('[Electron-Login] Failed to save cookies:', e);
-        }
+        const cookies = await session.defaultSession.cookies.get({});
+        FileUtils.writeJson(this.cookiesPath, cookies);
     }
 
     private checkLoginStatus(url: string) {
         if ((url.includes('tiktok.com') && !url.includes('login') && !url.includes('streamlabs')) || url.includes('/foryou')) {
-            console.log('[Electron-Login] Login detected. Preparing to navigate to Streamlabs Auth...');
+            console.log(CONSOLE_MESSAGES.ELECTRON_LOGIN_DETECTED);
 
             setTimeout(() => {
                 const current = this.window?.webContents.getURL();
@@ -155,8 +151,8 @@ export class StreamlabsAuth {
     }
 
     private forceNavigateAuth() {
-        console.log(`[Electron-Login] Navigating to Auth URL: ${this.authUrl}`);
-        this.window?.loadURL(this.authUrl).catch(e => console.error('Failed to load Auth URL:', e));
+        console.log(CONSOLE_MESSAGES.ELECTRON_FORCE_NAVIGATE(this.authUrl));
+        this.window?.loadURL(this.authUrl).catch((e: any) => console.error('Failed to load Auth URL:', e));
     }
 
     private checkSuccess(url: string) {
@@ -169,14 +165,14 @@ export class StreamlabsAuth {
         }
 
         const isSuccess = (url.includes('success=true') && code) ||
-            (url.includes('streamlabs.com/dashboard') && code) ||
-            (url.includes('streamlabs.com/slobs/dashboard') && code);
+            (url.includes(API_ENDPOINTS.DASHBOARD) && code) ||
+            (url.includes(API_ENDPOINTS.SLOBS_DASHBOARD) && code);
 
         if (isSuccess && !this.tokenFetchStarted && code) {
             this.tokenFetchStarted = true;
-            console.log('[Electron-Login] Success URL detected:', url);
-            console.log('[Electron-Login] Authorization code extracted:', code);
-            console.log('[Electron-Login] Starting token fetch...');
+            console.log(CONSOLE_MESSAGES.ELECTRON_SUCCESS(url));
+            console.log(CONSOLE_MESSAGES.ELECTRON_CODE(code));
+            console.log(CONSOLE_MESSAGES.ELECTRON_FETCH_START);
 
             this.saveCookies().then(() => {
                 this.executeTokenFetch(code!);
@@ -193,7 +189,7 @@ export class StreamlabsAuth {
             btn.innerText = 'Start Streamlabs Auth';
             btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;padding:12px 20px;background:#00f2ea;color:#000;font-weight:bold;border:none;border-radius:5px;cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.1);font-family:sans-serif;';
             btn.onclick = function() {
-                window.electronAPI.log('TRIGGER_STREAMLABS_AUTH');
+                window.electronAPI.log('${IPC_CHANNELS.TRIGGER_STREAMLABS_AUTH}');
             };
             document.body.appendChild(btn);
         })();
@@ -203,17 +199,17 @@ export class StreamlabsAuth {
 
     private async executeTokenFetch(code: string) {
         if (!this.codeVerifier) {
-            console.error('[Electron-Login] No CodeVerifier found!');
-            this.rejectToken?.(new Error('No CodeVerifier found'));
+            console.error(CONSOLE_MESSAGES.ELECTRON_NO_VERIFIER);
+            this.rejectToken?.(new Error(ERROR_MESSAGES.NO_CODE_VERIFIER));
             return;
         }
 
-        console.log('[Electron-Login] Fetching token from browser context...');
+        console.log(CONSOLE_MESSAGES.ELECTRON_FETCHING);
 
         const fetchCode = `
         (async () => {
             try {
-                const res = await fetch('https://streamlabs.com/api/v5/slobs/auth/data?code=${code}&code_verifier=${this.codeVerifier}', {
+                const res = await fetch('${API_ENDPOINTS.AUTH_DATA}?code=${code}&code_verifier=${this.codeVerifier}', {
                     method: 'GET',
                     credentials: 'include',
                     headers: { 
@@ -226,7 +222,7 @@ export class StreamlabsAuth {
                     const json = JSON.parse(text);
                     return { success: true, data: json, status: res.status };
                 } catch(e) {
-                    return { success: false, error: 'JSON Parse Error', body: text, status: res.status };
+                    return { success: false, error: '${ERROR_MESSAGES.JSON_PARSE_ERROR}', body: text, status: res.status };
                 }
             } catch (err) {
                 return { success: false, error: err.toString() };
@@ -238,22 +234,22 @@ export class StreamlabsAuth {
             const result = await this.window?.webContents.executeJavaScript(fetchCode);
             this.handleFetchResult(result);
         } catch (err: any) {
-            console.error('[Electron-Login] executeJavaScript error:', err.message);
+            console.error(CONSOLE_MESSAGES.ELECTRON_JS_ERROR(err.message));
             this.handleFetchResult({ success: false, error: err.message });
         }
     }
 
     private handleFetchResult(result: AuthResult) {
-        console.log('[Electron-Login] Token fetch result:', JSON.stringify(result));
+        console.log(CONSOLE_MESSAGES.ELECTRON_RESULT(JSON.stringify(result)));
 
         if (result.success && result.data?.success) {
             const authData = result.data.data;
-            console.log('[Electron-Login] Auth data received successfully');
+            console.log(CONSOLE_MESSAGES.ELECTRON_AUTH_SUCCESS);
             this.resolveToken?.(authData);
             this.cleanup();
         } else {
-            console.error('[Electron-Login] Error in fetch result:', JSON.stringify(result));
-            this.rejectToken?.(new Error(`Fetch failed: ${JSON.stringify(result)}`));
+            console.error(CONSOLE_MESSAGES.ELECTRON_ERROR_RESULT(JSON.stringify(result)));
+            this.rejectToken?.(new Error(`${ERROR_MESSAGES.FETCH_FAILED}: ${JSON.stringify(result)}`));
             this.cleanup();
         }
     }

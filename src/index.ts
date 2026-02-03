@@ -1,18 +1,12 @@
-import path from 'path';
-import fs from 'fs';
 import { spawn } from 'child_process';
-import * as electron from 'electron';
+import { app } from 'electron';
+import path from 'path';
 
 // Self-relaunch in Electron if running in a non-electron environment (like Bun)
 if (!process.versions.electron) {
     const electronPath = path.resolve(process.cwd(), 'node_modules', '.bin', 'electron');
-    // If we're running the source file with bun, we might need a loader
-    // But since we have a build step, it's better to tell the user to use 'bun start'
-    // or relaunch with the current file if it's the bundled one.
     const args = process.argv.slice(1);
 
-    // If it's a .ts file, we need to instruct electron how to handle it if we aren't using bun build
-    // But since we ARE using bun build, let's just relaunch whatever was called.
     spawn(electronPath, args, {
         stdio: 'inherit',
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
@@ -20,104 +14,81 @@ if (!process.versions.electron) {
     process.exit(0);
 }
 
-// Since we are now guaranteed to be in Electron, we can get these
-const { app, BrowserWindow, ipcMain } = electron;
-
-import { AuthManager } from './auth/AuthManager.ts';
-import { StreamAPI } from './api/StreamAPI.ts';
+import { AuthManager } from './auth/AuthManager';
+import { StreamAPI } from './api/StreamAPI';
+import { IPC_CHANNELS, CONSOLE_MESSAGES, PATHS } from './constants';
+import { createIpcHandler } from './utils/ipcHandler';
+import { MainWindowManager } from './utils/windowManager';
+import { TokenStorage } from './utils/fileUtils';
 
 // Main Application Logic
 async function init() {
-    let mainWindow: electron.BrowserWindow | null = null;
     let streamAPI: StreamAPI | null = null;
     let token: string | null = null;
 
-    async function createWindow() {
-        mainWindow = new BrowserWindow({
-            width: 1000,
-            height: 800,
-            title: 'TikTok Stream Key Generator',
-            backgroundColor: '#0f172a',
-            webPreferences: {
-                preload: path.join(process.cwd(), 'src/ui/preload.js'),
-                contextIsolation: true,
-                nodeIntegration: false,
-            },
-        });
+    const mainWindow = new MainWindowManager();
 
-        // Try local src path first for development, then fallback to built path if needed
-        const indexPath = path.join(process.cwd(), 'src/ui/index.html');
-        if (fs.existsSync(indexPath)) {
-            mainWindow.loadFile(indexPath);
-        } else {
-            console.error('Could not find index.html at', indexPath);
+    // Check for saved token on startup and initialize StreamAPI if available
+    function initializeWithSavedToken() {
+        const tokenStorage = new TokenStorage(PATHS.TOKENS);
+        const savedToken = tokenStorage.get();
+        if (savedToken) {
+            console.log(CONSOLE_MESSAGES.AUTH_SAVED_TOKEN);
+            token = savedToken;
+            streamAPI = new StreamAPI(token);
         }
-
-        mainWindow.on('closed', () => {
-            mainWindow = null;
-        });
     }
 
     function setupIPC() {
-        ipcMain.handle('auth:login', async () => {
-            try {
-                console.log('[Main] Starting authentication flow...');
-                const authManager = new AuthManager();
-                token = await authManager.retrieveToken();
-                streamAPI = new StreamAPI(token);
-                console.log('[Main] Authentication successful');
-                return { success: true };
-            } catch (error: any) {
-                console.error('[Main] Authentication failed:', error);
-                return { success: false, error: error.message || 'Unknown error during login' };
-            }
+        createIpcHandler(IPC_CHANNELS.AUTH_LOGIN, async () => {
+            console.log(CONSOLE_MESSAGES.AUTH_START);
+            const authManager = new AuthManager();
+            token = await authManager.retrieveToken();
+            streamAPI = new StreamAPI(token);
+            console.log(CONSOLE_MESSAGES.AUTH_SUCCESS);
+            return { success: true };
         });
 
-        ipcMain.handle('stream:info', async () => {
-            if (!streamAPI) return null;
-            try {
-                return await streamAPI.getInfo();
-            } catch (error) {
-                return null;
-            }
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_INFO, async () => {
+            return streamAPI?.getInfo() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:search', async (_event: any, query: string) => {
-            if (!streamAPI) return [];
-            return await streamAPI.search(query);
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_SEARCH, async (_: any, query: string) => {
+            return streamAPI?.search(query) ?? [];
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:start', async (_event: any, { title, category }: any) => {
-            if (!streamAPI) return null;
-            return await streamAPI.start(title, category);
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_START, async (_: any, { title, category }: any) => {
+            return streamAPI?.start(title, category) ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:end', async () => {
-            if (!streamAPI) return false;
-            return await streamAPI.end();
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_END, async () => {
+            return streamAPI?.end() ?? false;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('user:profile', async () => {
-            if (!streamAPI) return null;
-            return await streamAPI.getUserProfile();
-        });
+        createIpcHandler(IPC_CHANNELS.USER_PROFILE, async () => {
+            return streamAPI?.getUserProfile() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:current', async () => {
-            if (!streamAPI) return null;
-            return await streamAPI.getCurrentStream();
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_CURRENT, async () => {
+            return streamAPI?.getCurrentStream() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
     }
 
     await app.whenReady();
+    initializeWithSavedToken();
     setupIPC();
-    await createWindow();
+    mainWindow.create();
+    mainWindow.load();
 
     app.on('window-all-closed', () => {
         if (process.platform !== 'darwin') app.quit();
     });
 
     app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        if (!mainWindow.exists()) {
+            mainWindow.create();
+            mainWindow.load();
+        }
     });
 }
 
