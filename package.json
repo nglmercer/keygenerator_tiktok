@@ -1,29 +1,57 @@
 {
   "name": "keygenerator",
   "description": "tiktok-keygenerator - Electron application for generating TikTok stream keys via Streamlabs API integration.",
-  "author": "KeyGenerator Team",
+  "author": {
+    "name": "KeyGenerator Team",
+    "email": "team@keygenerator.com"
+  },
   "module": "index.ts",
   "main": "./dist/index.js",
   "type": "module",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "bun run typecheck && bun run scripts/build.ts",
     "typecheck": "bunx tsc --noEmit",
-    "discover": "bun scripts/discover.ts",
-    "start": "bun run build && electron ."
+    "start": "bun run build && electron .",
+    "build": "bun run typecheck && bun run scripts/build.ts",
+    "build:dist": "bun run build && electron-builder"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "electron-builder": "^26.7.0",
-    "electron": "^40.1.0"
+    "electron": "^40.1.0",
+    "typescript": "^5"
 
   },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
   "dependencies": {
-    "axios": "^1.13.2",
-    "ts-node": "^10.9.2"
+    "axios": "^1.13.2"
+  },
+  "build": {
+    "appId": "com.keygenerator.tiktok",
+    "productName": "TikTok KeyGenerator",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    }
   }
 }
