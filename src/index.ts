@@ -16,12 +16,17 @@ if (!process.versions.electron) {
 
 const { app } = electron;
 
-import { AuthManager } from './auth/AuthManager.ts';
-import { StreamAPI } from './api/StreamAPI.ts';
-import { IPC_CHANNELS, CONSOLE_MESSAGES } from './constants.ts';
-import { createIpcHandler } from './utils/ipcHandler.ts';
-import { MainWindowManager } from './utils/windowManager.ts';
-import { FileUtils } from './utils/fileUtils.ts';
+// Disable GPU hardware acceleration to fix VAAPI/libva errors on Linux
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+app.disableHardwareAcceleration();
+
+import { AuthManager } from './auth/AuthManager';
+import { StreamAPI } from './api/StreamAPI';
+import { IPC_CHANNELS, CONSOLE_MESSAGES } from './constants';
+import { createIpcHandler } from './utils/ipcHandler';
+import { MainWindowManager } from './utils/windowManager';
+import { FileUtils } from './utils/fileUtils';
 
 // Main Application Logic
 async function init() {

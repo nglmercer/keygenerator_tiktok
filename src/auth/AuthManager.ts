@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
-import { StreamlabsAuth } from './electron-login.ts';
+import { StreamlabsAuth } from './electron-login';
 import { 
     AUTH_CONFIG, 
     PATHS, 
     API_ENDPOINTS, 
     CONSOLE_MESSAGES 
-} from '../constants.ts';
-import { TokenStorage, FileUtils } from '../utils/fileUtils.ts';
+} from '../constants';
+import { TokenStorage, FileUtils } from '../utils/fileUtils';
 
 export class AuthManager {
     private codeVerifier: string;

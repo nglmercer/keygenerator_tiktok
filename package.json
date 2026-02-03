@@ -10,10 +10,10 @@
   "scripts": {
     "build": "bun run typecheck && bun run scripts/build.ts",
     "build:bundle": "bun run typecheck && bun run scripts/build.ts",
-    "build:dist": "bun run build:bundle && npx electron-builder",
-    "build:dist:linux": "bun run build:bundle && npx electron-builder --linux",
-    "build:dist:mac": "bun run build:bundle && npx electron-builder --mac",
-    "build:dist:win": "bun run build:bundle && npx electron-builder --win",
+    "build:dist": "bun run build:bundle && npx electron-builder --linux --config ./electron-builder.config.cjs",
+    "build:dist:linux": "bun run build:bundle && npx electron-builder --linux --config ./electron-builder.config.cjs",
+    "build:dist:mac": "bun run build:bundle && npx electron-builder --mac --config ./electron-builder.config.cjs",
+    "build:dist:win": "bun run build:bundle && npx electron-builder --win --config ./electron-builder.config.cjs",
     "typecheck": "bunx tsc --noEmit",
     "discover": "bun scripts/discover.ts",
     "start": "bun run build:bundle && electron ."
@@ -21,7 +21,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "electron-builder": "^26.7.0",
-    "electron": "^39.2.7"
+    "electron": "^40.1.0"
 
   },
   "peerDependencies": {

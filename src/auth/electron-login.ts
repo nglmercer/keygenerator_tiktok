@@ -9,8 +9,8 @@ import {
     ERROR_MESSAGES, 
     CONSOLE_MESSAGES,
     USER_AGENT
-} from '../constants.ts';
-import { FileUtils } from '../utils/fileUtils.ts';
+} from '../constants';
+import { FileUtils } from '../utils/fileUtils';
 
 interface AuthResult {
     success: boolean;
@@ -44,7 +44,7 @@ export class StreamlabsAuth {
     }
 
     private async createWindow() {
-        const preloadPath = require('path').join(process.cwd(), PATHS.PRELOAD_AUTH);
+        const preloadPath = require('path').join(process.resourcesPath, PATHS.PRELOAD_AUTH);
         console.log(CONSOLE_MESSAGES.ELECTRON_PRELOAD(preloadPath));
 
         this.window = new BrowserWindow({

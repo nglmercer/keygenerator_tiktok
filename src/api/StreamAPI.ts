@@ -2,13 +2,13 @@ import {
     API_ENDPOINTS, 
     QUERY_PARAMS, 
     CONSOLE_MESSAGES 
-} from '../constants.ts';
+} from '../constants';
 import { 
     BaseApiClient, 
     buildUrl, 
     toFormData, 
     truncate 
-} from '../utils/apiClient.ts';
+} from '../utils/apiClient';
 
 export interface StreamInfo {
     rtmpUrl: string;

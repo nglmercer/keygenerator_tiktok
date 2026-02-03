@@ -6,7 +6,7 @@ import {
     PATHS, 
     WEB_PREFERENCES,
     IPC_CHANNELS 
-} from '../constants.ts';
+} from '../constants';
 import type { IpcHandlerFn } from './ipcHandler';
 
 /**
@@ -97,7 +97,7 @@ export class AuthWindowManager extends WindowManager {
             title: WINDOW_CONFIG.AUTH.title,
             width: WINDOW_CONFIG.AUTH.width,
             height: WINDOW_CONFIG.AUTH.height,
-            preloadPath: path.join(process.cwd(), PATHS.PRELOAD_AUTH),
+            preloadPath: path.join(process.resourcesPath, PATHS.PRELOAD_AUTH),
         });
         this.codeVerifier = codeVerifier;
     }
@@ -170,12 +170,12 @@ export class MainWindowManager extends WindowManager {
             width: WINDOW_CONFIG.MAIN.width,
             height: WINDOW_CONFIG.MAIN.height,
             backgroundColor: WINDOW_CONFIG.MAIN.backgroundColor,
-            preloadPath: path.join(process.cwd(), PATHS.PRELOAD),
+            preloadPath: path.join(process.resourcesPath, PATHS.PRELOAD),
         });
     }
 
     load(): void {
-        const indexPath = path.join(process.cwd(), PATHS.INDEX_HTML);
+        const indexPath = path.join(process.resourcesPath, PATHS.INDEX_HTML);
         if (require('fs').existsSync(indexPath)) {
             this.loadFile(indexPath);
         } else {

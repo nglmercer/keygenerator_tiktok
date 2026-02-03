@@ -63,9 +63,9 @@ export const WINDOW_CONFIG = {
 
 // ============== File Paths ==============
 export const PATHS = {
-    PRELOAD: 'src/ui/preload.js',
-    PRELOAD_AUTH: 'src/auth/preload.js',
-    INDEX_HTML: 'src/ui/index.html',
+    PRELOAD: 'dist/ui/preload.js',
+    PRELOAD_AUTH: 'dist/preload.js',
+    INDEX_HTML: 'dist/ui/index.html',
     COOKIES: 'cookies.json',
     TOKENS: 'tokens.json',
     CONFIG: 'config.json',

@@ -66,6 +66,9 @@ async function build() {
 
   // Copy UI assets
   await cp("./src/ui", "./dist/ui", { recursive: true });
+  
+  // Copy auth preload script
+  await cp("./src/preload.js", "./dist/preload.js", { recursive: true });
 }
 
 build().catch(console.error);
