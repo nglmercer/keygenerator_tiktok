@@ -66,7 +66,7 @@ async function loadCategories() {
     const container = $('quick-categories');
     container.innerHTML = 'Loading...';
     const cats = await api('stream:search', '');
-    container.innerHTML = cats.slice(0, 15).map(c => 
+    container.innerHTML = cats?.slice(0, 15).map(c => 
         `<span class="category-pill">${c.full_name}</span>`
     ).join('');
     

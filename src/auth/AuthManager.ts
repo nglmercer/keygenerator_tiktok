@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'path';
 import { StreamlabsAuth } from './electron-login';
 import { 
     AUTH_CONFIG, 
@@ -6,7 +7,7 @@ import {
     API_ENDPOINTS, 
     CONSOLE_MESSAGES 
 } from '../constants';
-import { TokenStorage, FileUtils } from '../utils/fileUtils';
+import { TokenStorage, FileUtils, resolveAppPath } from '../utils/fileUtils';
 
 export class AuthManager {
     private codeVerifier: string;
@@ -52,9 +53,7 @@ export class AuthManager {
         console.log(CONSOLE_MESSAGES.AUTH_START_FLOW);
 
         const authUrl = await this.getAuthUrl();
-        const cookiePathAbs = FileUtils.exists(PATHS.COOKIES) 
-            ? require('path').resolve(process.cwd(), PATHS.COOKIES) 
-            : path.resolve(process.cwd(), PATHS.COOKIES);
+        const cookiePathAbs = resolveAppPath(PATHS.COOKIES);
 
         const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier);
         const authData = await auth.findToken();
@@ -65,5 +64,3 @@ export class AuthManager {
         return authData.oauth_token;
     }
 }
-
-import path from 'path';

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { resolveAppPath } from '../utils/fileUtils';
 
 export interface AppConfig {
     token?: string;
@@ -14,7 +15,7 @@ export class ConfigManager {
     private config: AppConfig;
 
     constructor(filename: string = 'config.json') {
-        this.configPath = path.resolve(process.cwd(), filename);
+        this.configPath = resolveAppPath(filename);
         this.config = {
             audienceType: '0',
             suppressDonationReminder: false

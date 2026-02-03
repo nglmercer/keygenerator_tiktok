@@ -8,7 +8,7 @@ export type JsonValue = JsonData | JsonArray | string | number | boolean | null;
 
 /**
  * Get the application base path
- * In development: returns the project root
+ * In development: returns the application path
  * In production: returns the packaged app resources path
  */
 export function getAppBasePath(): string {
@@ -16,8 +16,9 @@ export function getAppBasePath(): string {
     const isDev = !app.isPackaged;
     
     if (isDev) {
-        // In development, use the current working directory
-        return process.cwd();
+        // In development, use the application path
+        // This is more reliable than process.cwd() for Electron apps
+        return app.getAppPath();
     } else {
         // In production, use the resources path
         return process.resourcesPath;
@@ -39,7 +40,7 @@ export const FileUtils = {
      * Read JSON file safely
      */
     readJson<T extends JsonData>(filename: string, defaultData: T): T {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         if (fs.existsSync(filePath)) {
             try {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -58,7 +59,7 @@ export const FileUtils = {
      * Read JSON array file safely
      */
     readJsonArray<T extends JsonArray>(filename: string, defaultData: T): T {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         if (fs.existsSync(filePath)) {
             try {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -76,7 +77,7 @@ export const FileUtils = {
      * Write JSON file safely
      */
     writeJson(filename: string, data: JsonValue): void {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         try {
             fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
         } catch (error) {
@@ -88,7 +89,7 @@ export const FileUtils = {
      * Check if file exists
      */
     exists(filename: string): boolean {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         return fs.existsSync(filePath);
     },
 
@@ -96,7 +97,7 @@ export const FileUtils = {
      * Read file content
      */
     read(filename: string): string | null {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         if (fs.existsSync(filePath)) {
             try {
                 return fs.readFileSync(filePath, 'utf-8');
@@ -111,7 +112,7 @@ export const FileUtils = {
      * Write file content
      */
     write(filename: string, content: string): void {
-        const filePath = path.resolve(process.cwd(), filename);
+        const filePath = resolveAppPath(filename);
         try {
             fs.writeFileSync(filePath, content);
         } catch (error) {
@@ -127,7 +128,7 @@ export class TokenStorage {
     private tokenPath: string;
 
     constructor(filename: string = 'tokens.json') {
-        this.tokenPath = path.resolve(process.cwd(), filename);
+        this.tokenPath = resolveAppPath(filename);
     }
 
     get(): string | null {
@@ -155,7 +156,7 @@ export class ConfigStorage<T extends JsonData = Record<string, unknown>> {
     private defaultConfig: T;
 
     constructor(filename: string = 'config.json', defaultConfig: T) {
-        this.configPath = path.resolve(process.cwd(), filename);
+        this.configPath = resolveAppPath(filename);
         this.defaultConfig = defaultConfig;
     }
 

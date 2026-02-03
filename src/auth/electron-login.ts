@@ -10,7 +10,7 @@ import {
     CONSOLE_MESSAGES,
     USER_AGENT
 } from '../constants';
-import { FileUtils } from '../utils/fileUtils';
+import { FileUtils,getAppBasePath } from '../utils/fileUtils';
 
 interface AuthResult {
     success: boolean;
@@ -44,7 +44,7 @@ export class StreamlabsAuth {
     }
 
     private async createWindow() {
-        const preloadPath = require('path').join(process.resourcesPath, PATHS.PRELOAD_AUTH);
+        const preloadPath = require('path').join(getAppBasePath(), PATHS.PRELOAD_AUTH);
         console.log(CONSOLE_MESSAGES.ELECTRON_PRELOAD(preloadPath));
 
         this.window = new BrowserWindow({
