@@ -6,13 +6,8 @@ import * as electron from 'electron';
 // Self-relaunch in Electron if running in a non-electron environment (like Bun)
 if (!process.versions.electron) {
     const electronPath = path.resolve(process.cwd(), 'node_modules', '.bin', 'electron');
-    // If we're running the source file with bun, we might need a loader
-    // But since we have a build step, it's better to tell the user to use 'bun start'
-    // or relaunch with the current file if it's the bundled one.
     const args = process.argv.slice(1);
 
-    // If it's a .ts file, we need to instruct electron how to handle it if we aren't using bun build
-    // But since we ARE using bun build, let's just relaunch whatever was called.
     spawn(electronPath, args, {
         stdio: 'inherit',
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '' }
@@ -25,6 +20,13 @@ const { app, BrowserWindow, ipcMain } = electron;
 
 import { AuthManager } from './auth/AuthManager.ts';
 import { StreamAPI } from './api/StreamAPI.ts';
+import { 
+    WINDOW_CONFIG, 
+    PATHS, 
+    IPC_CHANNELS, 
+    CONSOLE_MESSAGES 
+} from './constants.ts';
+import { createIpcHandler } from './utils/ipcHandler.ts';
 
 // Main Application Logic
 async function init() {
@@ -34,19 +36,15 @@ async function init() {
 
     async function createWindow() {
         mainWindow = new BrowserWindow({
-            width: 1000,
-            height: 800,
-            title: 'TikTok Stream Key Generator',
-            backgroundColor: '#0f172a',
+            ...WINDOW_CONFIG.MAIN,
             webPreferences: {
-                preload: path.join(process.cwd(), 'src/ui/preload.js'),
+                preload: path.join(process.cwd(), PATHS.PRELOAD),
                 contextIsolation: true,
                 nodeIntegration: false,
             },
         });
 
-        // Try local src path first for development, then fallback to built path if needed
-        const indexPath = path.join(process.cwd(), 'src/ui/index.html');
+        const indexPath = path.join(process.cwd(), PATHS.INDEX_HTML);
         if (fs.existsSync(indexPath)) {
             mainWindow.loadFile(indexPath);
         } else {
@@ -59,53 +57,40 @@ async function init() {
     }
 
     function setupIPC() {
-        ipcMain.handle('auth:login', async () => {
-            try {
-                console.log('[Main] Starting authentication flow...');
-                const authManager = new AuthManager();
-                token = await authManager.retrieveToken();
-                streamAPI = new StreamAPI(token);
-                console.log('[Main] Authentication successful');
-                return { success: true };
-            } catch (error: any) {
-                console.error('[Main] Authentication failed:', error);
-                return { success: false, error: error.message || 'Unknown error during login' };
-            }
+        // Auth handler
+        createIpcHandler(IPC_CHANNELS.AUTH_LOGIN, async () => {
+            console.log(CONSOLE_MESSAGES.AUTH_START);
+            const authManager = new AuthManager();
+            token = await authManager.retrieveToken();
+            streamAPI = new StreamAPI(token);
+            console.log(CONSOLE_MESSAGES.AUTH_SUCCESS);
+            return { success: true };
         });
 
-        ipcMain.handle('stream:info', async () => {
-            if (!streamAPI) return null;
-            try {
-                return await streamAPI.getInfo();
-            } catch (error) {
-                return null;
-            }
-        });
+        // Stream handlers with streamAPI check
+        createIpcHandler(IPC_CHANNELS.STREAM_INFO, async () => {
+            return streamAPI?.getInfo() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:search', async (_event: any, query: string) => {
-            if (!streamAPI) return [];
-            return await streamAPI.search(query);
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_SEARCH, async (_: any, query: string) => {
+            return streamAPI?.search(query) ?? [];
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:start', async (_event: any, { title, category }: any) => {
-            if (!streamAPI) return null;
-            return await streamAPI.start(title, category);
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_START, async (_: any, { title, category }: any) => {
+            return streamAPI?.start(title, category) ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:end', async () => {
-            if (!streamAPI) return false;
-            return await streamAPI.end();
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_END, async () => {
+            return streamAPI?.end() ?? false;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('user:profile', async () => {
-            if (!streamAPI) return null;
-            return await streamAPI.getUserProfile();
-        });
+        createIpcHandler(IPC_CHANNELS.USER_PROFILE, async () => {
+            return streamAPI?.getUserProfile() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
 
-        ipcMain.handle('stream:current', async () => {
-            if (!streamAPI) return null;
-            return await streamAPI.getCurrentStream();
-        });
+        createIpcHandler(IPC_CHANNELS.STREAM_CURRENT, async () => {
+            return streamAPI?.getCurrentStream() ?? null;
+        }, { requireStreamApi: true, getStreamApi: () => streamAPI });
     }
 
     await app.whenReady();
