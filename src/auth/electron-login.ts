@@ -1,17 +1,16 @@
 import * as electron from 'electron';
 const { BrowserWindow, session, ipcMain } = electron;
-import type { IpcMainEvent } from 'electron';
-import fs from 'fs';
-import path from 'path';
+import type { IpcMainEvent, WebContents } from 'electron';
 import { 
     IPC_CHANNELS, 
     WINDOW_CONFIG, 
     PATHS, 
     API_ENDPOINTS, 
     ERROR_MESSAGES, 
-    CONSOLE_MESSAGES 
+    CONSOLE_MESSAGES,
+    USER_AGENT
 } from '../constants.ts';
-import { createIpcListener, removeIpcListener } from '../utils/ipcHandler.ts';
+import { FileUtils } from '../utils/fileUtils.ts';
 
 interface AuthResult {
     success: boolean;
@@ -22,7 +21,7 @@ interface AuthResult {
 }
 
 export class StreamlabsAuth {
-    private window: electron.BrowserWindow | null = null;
+    private window: typeof BrowserWindow.prototype | null = null;
     private authUrl: string;
     private cookiesPath: string;
     private codeVerifier: string;
@@ -45,11 +44,13 @@ export class StreamlabsAuth {
     }
 
     private async createWindow() {
-        const preloadPath = path.join(process.cwd(), PATHS.PRELOAD_AUTH);
+        const preloadPath = require('path').join(process.cwd(), PATHS.PRELOAD_AUTH);
         console.log(CONSOLE_MESSAGES.ELECTRON_PRELOAD(preloadPath));
 
         this.window = new BrowserWindow({
-            ...WINDOW_CONFIG.AUTH,
+            title: WINDOW_CONFIG.AUTH.title,
+            width: WINDOW_CONFIG.AUTH.width,
+            height: WINDOW_CONFIG.AUTH.height,
             show: true,
             webPreferences: {
                 nodeIntegration: false,
@@ -73,7 +74,6 @@ export class StreamlabsAuth {
     private setupIPC() {
         const logHandler = (event: IpcMainEvent, message: string) => {
             if (event.sender !== this.window?.webContents) return;
-            console.log(`[Renderer]: ${message}`);
             if (message === IPC_CHANNELS.TRIGGER_STREAMLABS_AUTH) {
                 this.forceNavigateAuth();
             }
@@ -84,28 +84,29 @@ export class StreamlabsAuth {
             this.handleFetchResult(result);
         };
 
-        createIpcListener(IPC_CHANNELS.LOG_CONSOLE, logHandler);
-        createIpcListener(IPC_CHANNELS.FETCH_RESULT, resultHandler);
+        ipcMain.on(IPC_CHANNELS.LOG_CONSOLE, logHandler);
+        ipcMain.on(IPC_CHANNELS.FETCH_RESULT, resultHandler);
 
         this.window?.on('closed', () => {
-            removeIpcListener(IPC_CHANNELS.LOG_CONSOLE, logHandler);
-            removeIpcListener(IPC_CHANNELS.FETCH_RESULT, resultHandler);
+            ipcMain.removeListener(IPC_CHANNELS.LOG_CONSOLE, logHandler);
+            ipcMain.removeListener(IPC_CHANNELS.FETCH_RESULT, resultHandler);
         });
     }
 
     private setupLifecycle() {
         if (!this.window) return;
 
-        this.window.webContents.on('did-navigate', (_: any, url: string) => {
+        const webContents = this.window.webContents as WebContents & { on: (event: string, callback: (...args: any[]) => void) => void };
+        webContents.on('did-navigate', (_: any, url: string) => {
             this.checkLoginStatus(url);
             this.checkSuccess(url);
         });
 
-        this.window.webContents.on('did-navigate-in-page', (_: any, url: string) => {
+        webContents.on('did-navigate-in-page', (_: any, url: string) => {
             this.checkSuccess(url);
         });
 
-        this.window.webContents.on('did-finish-load', () => {
+        webContents.on('did-finish-load', () => {
             this.injectManualAuthButton();
         });
 
@@ -118,31 +119,22 @@ export class StreamlabsAuth {
     }
 
     private async loadCookies() {
-        if (fs.existsSync(this.cookiesPath)) {
-            try {
-                const cookies = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
-                const promises = cookies.map((cookie: any) => {
-                    const scheme = cookie.secure ? 'https' : 'http';
-                    const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
-                    const url = `${scheme}://${domain}${cookie.path}`;
-                    return session.defaultSession.cookies.set({ ...cookie, url });
-                });
-                await Promise.all(promises);
-                console.log(CONSOLE_MESSAGES.ELECTRON_COOKIES_LOADED);
-            } catch (e) {
-                console.error(CONSOLE_MESSAGES.ELECTRON_COOKIES_SAVE_ERROR, e);
-            }
+        if (FileUtils.exists(this.cookiesPath)) {
+            const cookies = FileUtils.readJsonArray(this.cookiesPath, []);
+            const promises = cookies.map((cookie: any) => {
+                const scheme = cookie.secure ? 'https' : 'http';
+                const domain = cookie.domain.startsWith('.') ? cookie.domain.substring(1) : cookie.domain;
+                const url = `${scheme}://${domain}${cookie.path}`;
+                return session.defaultSession.cookies.set({ ...cookie, url });
+            });
+            await Promise.all(promises);
+            console.log(CONSOLE_MESSAGES.ELECTRON_COOKIES_LOADED);
         }
     }
 
     private async saveCookies() {
-        try {
-            const cookies = await session.defaultSession.cookies.get({});
-            fs.writeFileSync(this.cookiesPath, JSON.stringify(cookies, null, 2));
-            console.log('[Electron-Login] Cookies saved.');
-        } catch (e) {
-            console.error(CONSOLE_MESSAGES.ELECTRON_COOKIES_SAVE_ERROR, e);
-        }
+        const cookies = await session.defaultSession.cookies.get({});
+        FileUtils.writeJson(this.cookiesPath, cookies);
     }
 
     private checkLoginStatus(url: string) {
@@ -160,7 +152,7 @@ export class StreamlabsAuth {
 
     private forceNavigateAuth() {
         console.log(CONSOLE_MESSAGES.ELECTRON_FORCE_NAVIGATE(this.authUrl));
-        this.window?.loadURL(this.authUrl).catch(e => console.error('Failed to load Auth URL:', e));
+        this.window?.loadURL(this.authUrl).catch((e: any) => console.error('Failed to load Auth URL:', e));
     }
 
     private checkSuccess(url: string) {

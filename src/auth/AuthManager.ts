@@ -1,5 +1,3 @@
-import path from 'path';
-import fs from 'fs';
 import crypto from 'node:crypto';
 import { StreamlabsAuth } from './electron-login.ts';
 import { 
@@ -8,6 +6,7 @@ import {
     API_ENDPOINTS, 
     CONSOLE_MESSAGES 
 } from '../constants.ts';
+import { TokenStorage, FileUtils } from '../utils/fileUtils.ts';
 
 export class AuthManager {
     private codeVerifier: string;
@@ -42,33 +41,29 @@ export class AuthManager {
     }
 
     async retrieveToken(): Promise<string> {
-        const tokenPath = path.resolve(process.cwd(), PATHS.TOKENS);
+        const tokenStorage = new TokenStorage(PATHS.TOKENS);
+        const savedToken = tokenStorage.get();
 
-        // Try to load existing token
-        if (fs.existsSync(tokenPath)) {
-            try {
-                const saved = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
-                if (saved && saved.oauth_token) {
-                    console.log(CONSOLE_MESSAGES.AUTH_SAVED_TOKEN);
-                    return saved.oauth_token;
-                }
-            } catch (e) {
-                console.error(CONSOLE_MESSAGES.AUTH_LOAD_FAIL, e);
-            }
+        if (savedToken) {
+            console.log(CONSOLE_MESSAGES.AUTH_SAVED_TOKEN);
+            return savedToken;
         }
 
-        const authUrl = await this.getAuthUrl();
-        const cookiePathAbs = path.resolve(process.cwd(), PATHS.COOKIES);
-
         console.log(CONSOLE_MESSAGES.AUTH_START_FLOW);
+
+        const authUrl = await this.getAuthUrl();
+        const cookiePathAbs = FileUtils.exists(PATHS.COOKIES) 
+            ? require('path').resolve(process.cwd(), PATHS.COOKIES) 
+            : path.resolve(process.cwd(), PATHS.COOKIES);
 
         const auth = new StreamlabsAuth(authUrl, cookiePathAbs, this.codeVerifier);
         const authData = await auth.findToken();
 
-        // Save all data for later discovery scripts
-        fs.writeFileSync(tokenPath, JSON.stringify(authData, null, 2));
+        tokenStorage.save(authData);
         console.log(CONSOLE_MESSAGES.AUTH_SAVED);
 
         return authData.oauth_token;
     }
 }
+
+import path from 'path';

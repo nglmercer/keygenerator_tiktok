@@ -1,10 +1,14 @@
-import axios, { type AxiosInstance } from 'axios';
 import { 
     API_ENDPOINTS, 
-    USER_AGENT, 
     QUERY_PARAMS, 
     CONSOLE_MESSAGES 
 } from '../constants.ts';
+import { 
+    BaseApiClient, 
+    buildUrl, 
+    toFormData, 
+    truncate 
+} from '../utils/apiClient.ts';
 
 export interface StreamInfo {
     rtmpUrl: string;
@@ -18,78 +22,61 @@ export interface StreamCategory {
     game_mask_id: string;
 }
 
-export class StreamAPI {
-    private client: AxiosInstance;
+export class StreamAPI extends BaseApiClient {
     private currentStreamId: string | null = null;
 
     constructor(token: string) {
-        this.client = axios.create({
-            baseURL: API_ENDPOINTS.TIKTOK_BASE,
-            headers: {
-                'User-Agent': USER_AGENT,
-                'Authorization': `Bearer ${token}`
-            }
-        });
+        super(API_ENDPOINTS.TIKTOK_BASE, token);
     }
 
     async search(game: string): Promise<StreamCategory[]> {
         if (!game) return this.getInitialCategories();
 
-        const query = game.trim();
-        const truncatedGame = query.length > QUERY_PARAMS.MAX_CATEGORY_LENGTH 
-            ? query.substring(0, QUERY_PARAMS.MAX_CATEGORY_LENGTH) 
-            : query;
+        const truncatedGame = truncate(game.trim(), QUERY_PARAMS.MAX_CATEGORY_LENGTH);
 
-        if (query.length > QUERY_PARAMS.MAX_CATEGORY_LENGTH) {
-            console.log(CONSOLE_MESSAGES.API_SEARCH_TRUNCATED(query, truncatedGame));
+        if (game.trim().length > QUERY_PARAMS.MAX_CATEGORY_LENGTH) {
+            console.log(CONSOLE_MESSAGES.API_SEARCH_TRUNCATED(game.trim(), truncatedGame));
         }
 
-        try {
-            console.log(CONSOLE_MESSAGES.API_SEARCH(truncatedGame));
-            const response = await this.client.get(`/info?category=${encodeURIComponent(truncatedGame)}`);
-            const results = response.data.categories || [];
-            console.log(CONSOLE_MESSAGES.API_SEARCH_RESULTS(truncatedGame, results.length));
-            return results;
-        } catch (error: any) {
-            console.error('[StreamAPI] Search failed:', error.response?.status, error.message);
-            return [];
-        }
+        console.log(CONSOLE_MESSAGES.API_SEARCH(truncatedGame));
+
+        const response = await this.get<{ categories?: StreamCategory[] }>(
+            `/info?category=${encodeURIComponent(truncatedGame)}`
+        );
+
+        const results = response?.categories || [];
+        console.log(CONSOLE_MESSAGES.API_SEARCH_RESULTS(truncatedGame, results.length));
+        return results;
     }
 
     async getInitialCategories(): Promise<StreamCategory[]> {
-        try {
-            const response = await this.client.get(`/info?category=${QUERY_PARAMS.DEFAULT_CATEGORY}`);
-            return (response.data.categories || []).slice(0, QUERY_PARAMS.DEFAULT_LIMIT_CATEGORIES);
-        } catch (error) {
-            return [{ full_name: 'Other', game_mask_id: '', id: 'other' }];
-        }
+        const response = await this.get<{ categories?: StreamCategory[] }>(
+            `/info?category=${QUERY_PARAMS.DEFAULT_CATEGORY}`
+        );
+        return (response?.categories || []).slice(0, QUERY_PARAMS.DEFAULT_LIMIT_CATEGORIES);
     }
 
     async start(title: string, category: string, audienceType: string = QUERY_PARAMS.DEFAULT_AUDIENCE_TYPE): Promise<StreamInfo | null> {
-        try {
-            const formData = new FormData();
-            formData.append('title', title);
-            formData.append('device_platform', 'win32');
-            formData.append('category', category);
-            formData.append('audience_type', audienceType);
+        const formData = toFormData({
+            title,
+            device_platform: 'win32',
+            category,
+            audience_type: audienceType,
+        });
 
-            const response = await this.client.post('/stream/start', formData);
+        const response = await this.post<{ id: string; rtmp: string; key: string }>('/stream/start', formData);
 
-            if (response.data && response.data.id) {
-                this.currentStreamId = response.data.id;
-                return {
-                    rtmpUrl: response.data.rtmp,
-                    streamKey: response.data.key,
-                    id: response.data.id
-                };
-            } else {
-                console.error(CONSOLE_MESSAGES.API_START_ERROR, response.data);
-                return null;
-            }
-        } catch (error: any) {
-            console.error(CONSOLE_MESSAGES.API_END_ERROR, error.response?.data || error.message);
-            return null;
+        if (response?.id) {
+            this.currentStreamId = response.id;
+            return {
+                rtmpUrl: response.rtmp,
+                streamKey: response.key,
+                id: response.id
+            };
         }
+
+        console.error(CONSOLE_MESSAGES.API_START_ERROR, response);
+        return null;
     }
 
     async end(streamId?: string): Promise<boolean> {
@@ -99,41 +86,22 @@ export class StreamAPI {
             return false;
         }
 
-        try {
-            const response = await this.client.post(`/stream/${id}/end`);
-            return response.data && response.data.success;
-        } catch (error: any) {
-            console.error(CONSOLE_MESSAGES.API_END_ERROR, error.response?.data || error.message);
-            return false;
-        }
+        const response = await this.post<{ success: boolean }>(`/stream/${id}/end`);
+        return response?.success ?? false;
     }
 
     async getInfo(): Promise<any> {
-        try {
-            const response = await this.client.get('/info');
-            console.log('[StreamAPI] Info response:', JSON.stringify(response.data));
-            return response.data;
-        } catch (error: any) {
-            console.error(CONSOLE_MESSAGES.API_INFO_ERROR, error.response?.data || error.message);
-            throw error;
-        }
+        const response = await this.get<any>('/info');
+        console.log('[StreamAPI] Info response:', JSON.stringify(response));
+        return response;
     }
 
     async getUserProfile(): Promise<any> {
-        try {
-            const data = await this.getInfo();
-            return data.user || null;
-        } catch (error) {
-            return null;
-        }
+        const data = await this.getInfo();
+        return data?.user || null;
     }
 
     async getCurrentStream(): Promise<any> {
-        try {
-            const response = await this.client.get('/stream/current');
-            return response.data;
-        } catch (error) {
-            return null;
-        }
+        return await this.get<any>('/stream/current');
     }
 }
