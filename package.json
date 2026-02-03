@@ -14,7 +14,7 @@
     "typecheck": "bunx tsc --noEmit",
     "start": "bun run build && electron .",
     "build": "bun run typecheck && bun run scripts/build.ts",
-    "build:dist": "bun run build && electron-builder"
+    "build:dist": "bun run build && electron-builder --publish never"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -27,7 +27,6 @@
     "axios": "^1.13.2"
   },
   "build": {
-    "publish": "never",
     "appId": "com.keygenerator.tiktok",
     "productName": "TikTok KeyGenerator",
     "directories": {
