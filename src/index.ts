@@ -16,9 +16,10 @@ if (!process.versions.electron) {
 
 import { AuthManager } from './auth/AuthManager';
 import { StreamAPI } from './api/StreamAPI';
-import { IPC_CHANNELS, CONSOLE_MESSAGES } from './constants';
+import { IPC_CHANNELS, CONSOLE_MESSAGES, PATHS } from './constants';
 import { createIpcHandler } from './utils/ipcHandler';
 import { MainWindowManager } from './utils/windowManager';
+import { TokenStorage } from './utils/fileUtils';
 
 // Main Application Logic
 async function init() {
@@ -26,6 +27,17 @@ async function init() {
     let token: string | null = null;
 
     const mainWindow = new MainWindowManager();
+
+    // Check for saved token on startup and initialize StreamAPI if available
+    function initializeWithSavedToken() {
+        const tokenStorage = new TokenStorage(PATHS.TOKENS);
+        const savedToken = tokenStorage.get();
+        if (savedToken) {
+            console.log(CONSOLE_MESSAGES.AUTH_SAVED_TOKEN);
+            token = savedToken;
+            streamAPI = new StreamAPI(token);
+        }
+    }
 
     function setupIPC() {
         createIpcHandler(IPC_CHANNELS.AUTH_LOGIN, async () => {
@@ -63,6 +75,7 @@ async function init() {
     }
 
     await app.whenReady();
+    initializeWithSavedToken();
     setupIPC();
     mainWindow.create();
     mainWindow.load();
