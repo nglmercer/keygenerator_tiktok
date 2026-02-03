@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import * as electron from 'electron';
 import path from 'path';
+const { app } = electron;
 
 // Self-relaunch in Electron if running in a non-electron environment (like Bun)
 if (!process.versions.electron) {
@@ -14,19 +15,11 @@ if (!process.versions.electron) {
     process.exit(0);
 }
 
-const { app } = electron;
-
-// Disable GPU hardware acceleration to fix VAAPI/libva errors on Linux
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
-app.disableHardwareAcceleration();
-
 import { AuthManager } from './auth/AuthManager';
 import { StreamAPI } from './api/StreamAPI';
 import { IPC_CHANNELS, CONSOLE_MESSAGES } from './constants';
 import { createIpcHandler } from './utils/ipcHandler';
 import { MainWindowManager } from './utils/windowManager';
-import { FileUtils } from './utils/fileUtils';
 
 // Main Application Logic
 async function init() {

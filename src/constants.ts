@@ -51,7 +51,7 @@ export const WINDOW_CONFIG = {
     MAIN: {
         width: 1000,
         height: 800,
-        title: 'TikTok Stream Key Generator',
+        title: 'tiktok-keygenerator',
         backgroundColor: '#0f172a',
     },
     AUTH: {

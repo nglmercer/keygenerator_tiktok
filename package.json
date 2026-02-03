@@ -1,22 +1,17 @@
 {
   "name": "keygenerator",
-  "description": "TikTok Stream Key Generator - Electron application for generating TikTok stream keys via Streamlabs API integration.",
+  "description": "tiktok-keygenerator - Electron application for generating TikTok stream keys via Streamlabs API integration.",
   "author": "KeyGenerator Team",
   "module": "index.ts",
-  "main": "main.js",
+  "main": "./dist/index.js",
   "type": "module",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "build": "bun run typecheck && bun run scripts/build.ts",
-    "build:bundle": "bun run typecheck && bun run scripts/build.ts",
-    "build:dist": "bun run build:bundle && npx electron-builder --linux --config ./electron-builder.config.cjs",
-    "build:dist:linux": "bun run build:bundle && npx electron-builder --linux --config ./electron-builder.config.cjs",
-    "build:dist:mac": "bun run build:bundle && npx electron-builder --mac --config ./electron-builder.config.cjs",
-    "build:dist:win": "bun run build:bundle && npx electron-builder --win --config ./electron-builder.config.cjs",
     "typecheck": "bunx tsc --noEmit",
     "discover": "bun scripts/discover.ts",
-    "start": "bun run build:bundle && electron ."
+    "start": "bun run build && electron ."
   },
   "devDependencies": {
     "@types/bun": "latest",
