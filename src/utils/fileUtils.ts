@@ -9,7 +9,7 @@ export type JsonValue = JsonData | JsonArray | string | number | boolean | null;
 /**
  * Get the application base path
  * In development: returns the application path
- * In production: returns the packaged app resources path
+ * In production: returns the path to the app (asar root)
  */
 export function getAppBasePath(): string {
     // Check if we're in development mode
@@ -17,11 +17,11 @@ export function getAppBasePath(): string {
     
     if (isDev) {
         // In development, use the application path
-        // This is more reliable than process.cwd() for Electron apps
         return app.getAppPath();
     } else {
-        // In production, use the resources path
-        return process.resourcesPath;
+        // In production, use app.getAppPath() which returns the asar root
+        // This is correct for loading files from inside the asar archive
+        return app.getAppPath();
     }
 }
 
